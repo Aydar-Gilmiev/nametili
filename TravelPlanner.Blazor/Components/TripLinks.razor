@@ -1,0 +1,12 @@
+<nav class="trip-links" aria-label="Разделы поездки">
+    <NavLink href="@($"/trips/{TripId}")" Match="NavLinkMatch.All">Участники</NavLink>
+    <NavLink href="@($"/trips/{TripId}/proposals")">Предложения</NavLink>
+    <NavLink href="@($"/trips/{TripId}/schedule")">Расписание</NavLink>
+    <NavLink href="@($"/trips/{TripId}/expenses")">Расходы</NavLink>
+    <NavLink href="@($"/trips/{TripId}/balances")">Расчёты</NavLink>
+    <NavLink href="@($"/trips/{TripId}/chat")">Чат</NavLink>
+    <NavLink href="@($"/trips/{TripId}/map")">Карта</NavLink>
+    <NavLink href="@($"/trips/{TripId}/photos")">Фотографии</NavLink>
+</nav>
+
+@code { [Parameter] public int TripId { get; set; } }

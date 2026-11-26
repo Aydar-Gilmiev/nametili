@@ -1,0 +1,38 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<div class="page">
+    <a class="skip-link" href="#main-content">Перейти к содержимому</a>
+    <header class="app-header">
+        <div class="header-inner">
+            <div class="navigation"><NavMenu /></div>
+            <div class="account">
+            @if (CurrentUser.User == null)
+            {
+                <a href="/login">Вход</a><a class="btn btn-primary btn-sm" href="/register">Регистрация</a>
+            }
+            else
+            {
+                <span class="user-name">@CurrentUser.User.Name</span>
+                <button class="btn btn-outline-secondary btn-sm" @onclick="Logout">Выйти</button>
+            }
+            </div>
+        </div>
+    </header>
+    <main id="main-content" tabindex="-1">
+        <div class="content">@Body</div>
+    </main>
+</div>
+
+@code {
+    protected override void OnInitialized() { CurrentUser.Changed += UserChanged; }
+    private void UserChanged() { _ = InvokeAsync(StateHasChanged); }
+    private async Task Logout()
+    {
+        await CurrentUser.Logout();
+        Navigation.NavigateTo("/login");
+    }
+    public void Dispose() { CurrentUser.Changed -= UserChanged; }
+}

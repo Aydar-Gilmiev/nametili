@@ -1,0 +1,57 @@
+@page "/trips/{TripId:int}/proposals/delete/{ProposalId:int}"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Удаление предложения</PageTitle>
+<h1>Удаление предложения</h1>
+@if (isLoading) { <p role="status">Загрузка...</p> }
+else if (proposal != null && canDelete)
+{
+    <p>Удалить предложение «@proposal.Title» вместе с его голосами?</p>
+    <p>Если предложение связано с расписанием, событие останется, но ссылка на предложение исчезнет.</p>
+    <div class="actions">
+        <button class="btn btn-danger" disabled="@isSaving" @onclick="DeleteProposal">@(isSaving ? "Удаляем..." : "Да, удалить предложение")</button>
+        <a class="btn btn-outline-secondary" href="@($"/trips/{TripId}/proposals")">Отмена</a>
+    </div>
+}
+@if (errorMessage != "") { <p class="text-danger mt-3" role="alert">@errorMessage</p> }
+@if (!canDelete && !isLoading) { <a href="@($"/trips/{TripId}/proposals")">К предложениям</a> }
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    [Parameter] public int ProposalId { get; set; }
+    private Proposal? proposal;
+    private string errorMessage = "";
+    private bool isLoading = true;
+    private bool isSaving;
+    private bool canDelete;
+    protected override async Task OnParametersSetAsync()
+    {
+        canDelete = false;
+        isLoading = true;
+        errorMessage = "";
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        var tripResult = await ApiRequest.GetTrip(TripId);
+        var result = await ApiRequest.GetProposals(TripId);
+        proposal = result.data?.FirstOrDefault(value => value.Id == ProposalId);
+        if (!tripResult.status) errorMessage = tripResult.message;
+        else if (!result.status) errorMessage = result.message;
+        else if (proposal == null) errorMessage = "Предложение не найдено.";
+        else
+        {
+            canDelete = proposal.UserId == CurrentUser.User?.Id || tripResult.data?.Members.Any(member => member.Id == CurrentUser.User?.Id && member.Role == "Organizer") == true;
+            if (!canDelete) errorMessage = "Удалять предложение может автор или организатор.";
+        }
+        isLoading = false;
+    }
+    private async Task DeleteProposal()
+    {
+        if (isSaving || !canDelete) return;
+        isSaving = true;
+        var result = await ApiRequest.DeleteProposal(TripId, ProposalId);
+        isSaving = false;
+        if (!result.status) { errorMessage = result.message; return; }
+        Navigation.NavigateTo($"/trips/{TripId}/proposals");
+    }
+}

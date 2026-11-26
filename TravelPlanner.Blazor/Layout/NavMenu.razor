@@ -1,0 +1,20 @@
+<div class="brand-navigation">
+    <a class="brand" href="/" aria-label="Наметили — главная">
+        <img src="images/nametili.svg" alt="Наметили" width="184" height="40" />
+    </a>
+    <button type="button" class="menu-toggle btn btn-outline-secondary" aria-label="@(collapseNavMenu ? "Открыть меню" : "Закрыть меню")"
+            aria-expanded="@(!collapseNavMenu)" aria-controls="main-navigation" @onclick="ToggleNavMenu">
+        @(collapseNavMenu ? "Меню" : "Закрыть")
+    </button>
+    <nav id="main-navigation" class="@(collapseNavMenu ? "nav-links" : "nav-links is-open")" aria-label="Основная навигация">
+        <NavLink href="" Match="NavLinkMatch.All" @onclick="CloseMenu">Главная</NavLink>
+        <NavLink href="trips" @onclick="CloseMenu">Мои поездки</NavLink>
+        <NavLink href="invitations" @onclick="CloseMenu">Приглашения</NavLink>
+    </nav>
+</div>
+
+@code {
+    private bool collapseNavMenu = true;
+    private void ToggleNavMenu() { collapseNavMenu = !collapseNavMenu; }
+    private void CloseMenu() { collapseNavMenu = true; }
+}

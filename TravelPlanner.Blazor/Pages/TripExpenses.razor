@@ -1,0 +1,163 @@
+@page "/trips/{TripId:int}/expenses"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Расходы — Наметили</PageTitle>
+<p><a href="@($"/trips/{TripId}")">Назад к поездке</a></p>
+<h1>Расходы</h1>
+<TripLinks TripId="TripId" />
+@if (error != "") { <p role="alert">@error</p> }
+@if (notice != "") { <p role="status" class="text-success">@notice</p> }
+@if (loading) { <p role="status">Загрузка расходов…</p> }
+else if (details != null)
+{
+    <div class="page-heading"><p>@details.Trip.Name · Все суммы в одной общей валюте</p><a href="@($"/trips/{TripId}/balances")">Балансы и возвраты →</a></div>
+    <div class="planner-layout">
+        <section>
+            <section class="mb-4" aria-labelledby="proposal-drafts-title">
+                <h2 id="proposal-drafts-title">Из утверждённых предложений</h2>
+                <p class="text-muted">Название и сумма уже готовы. Выберите предложение, укажите плательщика и участников и сохраните расход. До сохранения балансы не меняются.</p>
+                @if (ProposalDrafts.Count == 0)
+                {
+                    <p>Новых заготовок нет. Здесь появятся утверждённые предложения, по которым ещё не сохранён расход.</p>
+                }
+                @foreach (var proposal in ProposalDrafts)
+                {
+                    <article class="finance-entry" @key="proposal.Id">
+                        <div class="entry-heading"><h3>@proposal.Title</h3><strong class="money">@proposal.PlannedCost.ToString("N2")</strong></div>
+                        <button class="btn btn-outline-secondary btn-sm" type="button" disabled="@busy" @onclick="() => UseProposal(proposal)">Добавить расход</button>
+                    </article>
+                }
+            </section>
+            <div class="page-heading"><h2>Общие покупки</h2><button class="btn btn-outline-secondary" disabled="@busy" @onclick="Reload">Обновить</button></div>
+            <p>Всего расходов: <strong class="money">@expenses.Sum(value => value.Amount).ToString("N2")</strong></p>
+            @if (expenses.Count == 0) { <div class="empty-state"><p>Расходов пока нет. Добавьте билеты, жильё или покупку для группы.</p></div> }
+            @foreach (var expense in expenses)
+            {
+                <article class="finance-entry" @key="expense.Id">
+                    <div class="entry-heading"><h3>@expense.Title</h3><strong class="money">@expense.Amount.ToString("N2")</strong></div>
+                    <p class="text-muted">Оплатил(а): @expense.PayerName · @expense.OccurredOn.ToString("dd.MM.yyyy")</p>
+                    @if (expense.ProposalId.HasValue) { <p class="text-muted">Из утверждённого предложения</p> }
+                    <details><summary>Доли участников</summary><ul class="share-list">@foreach (var share in expense.Shares) { <li><span>@share.Name</span><span class="money">@share.Amount.ToString("N2")</span></li> }</ul></details>
+                    @if (organizer || expense.PayerUserId == CurrentUser.User?.Id)
+                    {
+                        <div class="actions mt-3"><button class="btn btn-outline-secondary btn-sm" disabled="@busy" @onclick="() => Edit(expense)">Изменить</button><button class="btn btn-outline-danger btn-sm" disabled="@busy" @onclick="() => deleting = expense.Id">Удалить</button></div>
+                        @if (deleting == expense.Id) { <div class="confirm-action"><p>Удалить расход и его доли? Балансы будут пересчитаны.</p><div class="actions"><button class="btn btn-danger" disabled="@busy" @onclick="() => Delete(expense.Id)">Удалить расход</button><button class="btn btn-outline-secondary" disabled="@busy" @onclick="() => deleting = null">Отмена</button></div></div> }
+                    }
+                </article>
+            }
+        </section>
+        <section>
+            <h2>@(editing == 0 ? "Добавить расход" : "Изменить расход")</h2>
+            @if (draft.ProposalId.HasValue)
+            {
+                <p>Расход из предложения. Укажите, кто оплатил и между кем разделить сумму. Стоимость можно уточнить по фактической оплате.</p>
+            }
+            <form class="edit-form planner-form" @onsubmit="Save" @onsubmit:preventDefault>
+                <fieldset disabled="@busy">
+                    <label for="expense-title" class="form-label">На что потратили</label><input id="expense-title" class="form-control mb-3" required maxlength="200" @ref="expenseTitle" @bind="draft.Title" />
+                    <label for="expense-amount" class="form-label">Сумма</label><input id="expense-amount" class="form-control mb-3" type="number" inputmode="decimal" min="0.01" max="9999999999.99" step="0.01" required @bind="draft.Amount" />
+                    <label for="expense-payer" class="form-label">Кто оплатил</label><select id="expense-payer" class="form-select mb-3" @bind="draft.PayerUserId" disabled="@(!organizer)">@foreach (var member in details.Members) { <option value="@member.Id">@member.Name</option> }</select>
+                    @if (!organizer) { <p class="text-muted">Участник может добавлять расходы только от своего имени.</p> }
+                    <label for="expense-date" class="form-label">Дата оплаты</label><input id="expense-date" class="form-control mb-3" type="date" required @bind="draft.OccurredOn" />
+                    <label for="expense-split" class="form-label">Как разделить</label><select id="expense-split" class="form-select mb-3" @bind="draft.SplitMode"><option value="Equal">Поровну</option><option value="Custom">Указать доли вручную</option></select>
+                    <p class="form-label">Между кем разделить</p>
+                    @foreach (var person in people)
+                    {
+                        <div class="share-editor" @key="person.UserId">
+                            <label class="share-person"><input type="checkbox" @bind="person.Selected" /> <span>@person.Name</span></label>
+                            @if (draft.SplitMode == "Custom") { <input class="form-control share-amount" aria-label="@($"Доля: {person.Name}")" type="number" min="0" max="9999999999.99" step="0.01" disabled="@(!person.Selected)" @bind="person.Amount" /> }
+                            else if (person.Selected) { <span class="money">@EqualShare(person.UserId).ToString("N2")</span> }
+                        </div>
+                    }
+                    @if (draft.SplitMode == "Custom") { <p class="mt-3">Сумма долей: <strong class="money">@people.Where(value => value.Selected).Sum(value => value.Amount).ToString("N2")</strong> из @draft.Amount.ToString("N2")</p> }
+                    else { <p class="text-muted mt-3">Остаток копеек распределяется по ID участников. Плательщик не обязан входить в выбранную группу.</p> }
+                    <div class="actions mt-3"><button class="btn btn-primary" type="submit">@(busy ? "Сохраняем…" : "Сохранить расход")</button><button class="btn btn-outline-secondary" type="button" @onclick="Reset">Отмена</button></div>
+                </fieldset>
+            </form>
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private TripDetailsData? details;
+    private List<Expense> expenses = new();
+    private List<Proposal> proposals = new();
+    private List<Proposal> ProposalDrafts => proposals.Where(value => value.Status == "Approved"
+        && !expenses.Any(expense => expense.ProposalId == value.Id)).ToList();
+    private ElementReference expenseTitle;
+    private List<ExpenseParticipant> people = new();
+    private ExpenseRequest draft = new();
+    private bool loading = true, busy, organizer;
+    private int editing;
+    private int? deleting;
+    private string error = "", notice = "";
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        loading = true; details = null; expenses = new(); proposals = new(); error = notice = "";
+        var result = await ApiRequest.GetTrip(TripId);
+        if (!result.status || result.data == null) { error = result.message; loading = false; return; }
+        details = result.data; organizer = details.Members.Any(value => value.Id == CurrentUser.User.Id && value.Role == "Organizer");
+        Reset(); await Reload(); loading = false;
+    }
+    private async Task Reload()
+    {
+        error = "";
+        var result = await ApiRequest.GetExpenses(TripId);
+        if (!result.status || result.data == null) { error = result.message; return; }
+        expenses = result.data;
+        var proposalResult = await ApiRequest.GetProposals(TripId);
+        if (proposalResult.status && proposalResult.data != null) proposals = proposalResult.data;
+        else { proposals = new(); error = proposalResult.message; }
+    }
+    private void Reset()
+    {
+        editing = 0; draft = new ExpenseRequest { PayerUserId = CurrentUser.User?.Id ?? 0 };
+        people = details?.Members.OrderBy(value => value.Id).Select(value => new ExpenseParticipant { UserId = value.Id, Name = value.Name }).ToList() ?? new();
+    }
+    private async Task UseProposal(Proposal proposal)
+    {
+        if (busy) return;
+        Reset(); error = notice = "";
+        draft.ProposalId = proposal.Id;
+        draft.Title = proposal.Title;
+        draft.Amount = proposal.PlannedCost;
+        await expenseTitle.FocusAsync();
+    }
+    private void Edit(Expense expense)
+    {
+        Reset(); editing = expense.Id; error = notice = "";
+        draft = new ExpenseRequest { ProposalId = expense.ProposalId, Title = expense.Title, Amount = expense.Amount, PayerUserId = expense.PayerUserId, OccurredOn = expense.OccurredOn, SplitMode = "Custom" };
+        foreach (var person in people) { var share = expense.Shares.FirstOrDefault(value => value.UserId == person.UserId); person.Selected = share != null; person.Amount = share?.Amount ?? 0; }
+    }
+    private decimal EqualShare(int id)
+    {
+        var selected = people.Where(value => value.Selected).OrderBy(value => value.UserId).ToList();
+        if (selected.Count == 0 || draft.Amount < 0 || draft.Amount > 9999999999.99m) return 0;
+        var cents = decimal.Truncate(draft.Amount * 100);
+        return (decimal.Truncate(cents / selected.Count) + (selected.FindIndex(value => value.UserId == id) < cents % selected.Count ? 1 : 0)) / 100m;
+    }
+    private async Task Save()
+    {
+        if (busy) return; error = notice = "";
+        var selected = people.Where(value => value.Selected).ToList();
+        if (selected.Count == 0) { error = "Выберите хотя бы одного участника."; return; }
+        if (draft.SplitMode == "Custom" && selected.Sum(value => value.Amount) != draft.Amount) { error = "Сумма долей должна точно совпадать с расходом."; return; }
+        draft.ParticipantUserIds = draft.SplitMode == "Equal" ? selected.Select(value => value.UserId).ToList() : new();
+        draft.Shares = draft.SplitMode == "Custom" ? selected.Select(value => new ExpenseShare { UserId = value.UserId, Amount = value.Amount }).ToList() : new();
+        busy = true;
+        var result = editing == 0 ? await ApiRequest.AddExpense(TripId, draft) : await ApiRequest.UpdateExpense(TripId, editing, draft);
+        if (result.status) { Reset(); await Reload(); notice = "Расход сохранён. Балансы пересчитаны."; } else error = result.message;
+        busy = false;
+    }
+    private async Task Delete(int id)
+    {
+        if (busy) return; busy = true; error = notice = "";
+        var result = await ApiRequest.DeleteExpense(TripId, id);
+        if (result.status) { if (editing == id) Reset(); deleting = null; await Reload(); notice = "Расход удалён. Балансы пересчитаны."; } else error = result.message;
+        busy = false;
+    }
+}

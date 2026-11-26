@@ -1,0 +1,59 @@
+@page "/trips/edit/{TripId:int}"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Изменение поездки</PageTitle>
+<h1>Изменение поездки</h1>
+@if (isLoading) { <p role="status">Загрузка...</p> }
+else if (canEdit)
+{
+    <form class="edit-form" @onsubmit="UpdateTrip" @onsubmit:preventDefault>
+        <fieldset disabled="@isSaving">
+            <TripFields Model="tripRequest" />
+            <div class="actions">
+                <button class="btn btn-primary" type="submit">@(isSaving ? "Сохраняем..." : "Сохранить изменения")</button>
+                <a class="btn btn-outline-secondary" href="@($"/trips/{TripId}")">Отмена</a>
+            </div>
+        </fieldset>
+    </form>
+}
+@if (errorMessage != "") { <p class="text-danger mt-3" role="alert">@errorMessage</p> }
+@if (!canEdit && !isLoading) { <a href="/trips">Вернуться к поездкам</a> }
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private TripRequest tripRequest = new();
+    private string errorMessage = "";
+    private bool isLoading = true;
+    private bool isSaving;
+    private bool canEdit;
+    protected override async Task OnParametersSetAsync()
+    {
+        canEdit = false;
+        isLoading = true;
+        errorMessage = "";
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        var result = await ApiRequest.GetTrip(TripId);
+        if (!result.status || result.data == null) errorMessage = result.message;
+        else if (!result.data.Members.Any(member => member.Id == CurrentUser.User?.Id && member.Role == "Organizer"))
+            errorMessage = "Изменять поездку может только организатор.";
+        else
+        {
+            var trip = result.data.Trip;
+            tripRequest = new TripRequest { Name = trip.Name, Destination = trip.Destination, StartDate = trip.StartDate, EndDate = trip.EndDate };
+            canEdit = true;
+        }
+        isLoading = false;
+    }
+    private async Task UpdateTrip()
+    {
+        if (isSaving || !canEdit) return;
+        if (tripRequest.EndDate < tripRequest.StartDate) { errorMessage = "Дата окончания должна быть не раньше даты начала."; return; }
+        isSaving = true;
+        var result = await ApiRequest.UpdateTrip(TripId, tripRequest);
+        isSaving = false;
+        if (!result.status) { errorMessage = result.message; return; }
+        Navigation.NavigateTo($"/trips/{TripId}");
+    }
+}

@@ -1,0 +1,182 @@
+@page "/"
+@using System.Globalization
+@inject CurrentUser CurrentUser
+@inject ApiRequest ApiRequest
+@inject NavigationManager Navigation
+
+<PageTitle>Наметили — поездки</PageTitle>
+
+@if (CurrentUser.User == null)
+{
+    <section class="home-guest" aria-labelledby="guest-title">
+        <p class="home-label">Наметили</p>
+        <h1 id="guest-title">Поездки с друзьями</h1>
+        <p class="guest-description">Создайте поездку и пригласите остальных. Места, обсуждения и фотографии будут в ней.</p>
+        <div class="guest-actions">
+            <a class="btn btn-primary" href="/register">Создать аккаунт</a>
+            <a href="/login">Войти</a>
+        </div>
+        <p class="guest-invitation">Вас пригласили? Войдите с той почтой, которую указал организатор.</p>
+    </section>
+}
+else
+{
+    <header class="home-heading">
+        <h1>Поездки</h1>
+        <div class="actions">
+            <button class="home-refresh" type="button" disabled="@loading" @onclick="Load">Обновить</button>
+            <a class="btn btn-primary" href="/trips/add">Создать поездку</a>
+        </div>
+    </header>
+
+    @if (loading)
+    {
+        <p role="status" class="text-muted">Загрузка поездок…</p>
+        <div class="home-loading" aria-hidden="true"><div></div><div></div></div>
+    }
+    else
+    {
+        <div class="home-columns">
+            <div class="home-trips">
+                @if (tripError != "")
+                {
+                    <section class="home-unavailable"><h2>Не удалось загрузить поездки</h2><p role="alert">@tripError</p></section>
+                }
+                else if (nextTrip != null)
+                {
+                    <section class="next-trip" aria-labelledby="next-trip-title">
+                        <div class="next-trip-top">
+                            <p class="home-label">@(nextTrip.StartDate <= today ? "Сейчас в поездке" : "Ближайшая поездка")</p>
+                            <p class="trip-period">@DateRange(nextTrip)</p>
+                        </div>
+                        <h2 id="next-trip-title"><a href="@($"/trips/{nextTrip.Id}")">@nextTrip.Name</a></h2>
+                        @if (!string.IsNullOrWhiteSpace(nextTrip.Destination) && nextTrip.Name != nextTrip.Destination)
+                        { <p class="trip-destination">@nextTrip.Destination</p> }
+                        <div class="next-trip-bottom">
+                            <a class="open-trip" href="@($"/trips/{nextTrip.Id}")">Открыть поездку <span aria-hidden="true">→</span></a>
+                            <nav aria-label="Быстрый переход к поездке" class="trip-shortcuts">
+                                <a href="@($"/trips/{nextTrip.Id}/proposals")">Предложения</a>
+                                <a href="@($"/trips/{nextTrip.Id}/chat")">Чат</a>
+                                <a href="@($"/trips/{nextTrip.Id}/map")">Карта</a>
+                            </nav>
+                        </div>
+                    </section>
+                }
+                else
+                {
+                    <section class="home-empty" aria-labelledby="empty-title">
+                        <p class="home-label">Поездки</p>
+                        <h2 id="empty-title">@(pastTrips.Count == 0 ? "Пока нет поездок" : "Новых поездок пока нет")</h2>
+                        <p>Создайте поездку или примите приглашение от друзей.</p>
+                    </section>
+                }
+
+                @if (tripError == "" && otherTrips.Count > 0)
+                {
+                    <section class="home-trip-list" aria-labelledby="other-trips-title">
+                        <div class="home-section-heading"><h2 id="other-trips-title">Следующие поездки</h2><a href="/trips">Все поездки</a></div>
+                        @foreach (var trip in otherTrips.Take(3))
+                        {
+                            <a class="home-trip-row" href="@($"/trips/{trip.Id}")" @key="trip.Id">
+                                <div class="trip-day" aria-hidden="true"><span>@trip.StartDate.Day</span><span>@trip.StartDate.ToString("MMM", russian).TrimEnd('.')</span></div>
+                                <div class="trip-row-copy"><h3>@trip.Name</h3><p>@DateRange(trip)</p></div>
+                                <span class="row-arrow" aria-hidden="true">↗</span>
+                            </a>
+                        }
+                    </section>
+                }
+                @if (tripError == "" && pastTrips.Count > 0)
+                {
+                    <section class="home-trip-list" aria-labelledby="past-trips-title">
+                        <div class="home-section-heading"><h2 id="past-trips-title">Прошедшие поездки</h2><a href="/trips">Все поездки</a></div>
+                        @foreach (var trip in pastTrips.Take(3))
+                        {
+                            <a class="home-trip-row past-trip" href="@($"/trips/{trip.Id}")" @key="trip.Id">
+                                <div class="trip-row-copy"><h3>@trip.Name</h3><p>@DateRange(trip)</p></div>
+                                <span class="row-arrow" aria-hidden="true">↗</span>
+                            </a>
+                        }
+                    </section>
+                }
+            </div>
+
+            <aside class="home-invitations" aria-labelledby="invitations-title">
+                <div class="home-section-heading"><h2 id="invitations-title">Приглашения</h2>
+                    @if (invitationError == "" && invitations.Count > 0) { <span class="invitation-count">@invitations.Count</span> }
+                </div>
+                @if (invitationError != "") { <p role="alert">@invitationError</p> }
+                else if (invitations.Count == 0)
+                {
+                    <p class="no-invitations">Новых приглашений нет.</p>
+                    <p class="invitation-note">Когда вас пригласят в поездку, она появится здесь.</p>
+                }
+                else
+                {
+                    @foreach (var invitation in invitations.Take(3))
+                    {
+                        <a class="home-invitation" href="/invitations" @key="invitation.Id">
+                            <h3>@invitation.Name</h3>
+                            @if (!string.IsNullOrWhiteSpace(invitation.Destination)) { <p>@invitation.Destination</p> }
+                        </a>
+                    }
+                }
+                <a class="invitations-link" href="/invitations">Открыть приглашения <span aria-hidden="true">→</span></a>
+            </aside>
+        </div>
+    }
+}
+
+@code {
+    private static readonly CultureInfo russian = CultureInfo.GetCultureInfo("ru-RU");
+    private DateOnly today;
+    private Trip? nextTrip;
+    private List<Trip> otherTrips = new();
+    private List<Trip> pastTrips = new();
+    private List<Invitation> invitations = new();
+    private string tripError = "", invitationError = "";
+    private bool loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (CurrentUser.User != null) await Load();
+    }
+
+    private async Task Load()
+    {
+        if (loading || CurrentUser.User == null) return;
+        loading = true;
+        tripError = invitationError = "";
+        nextTrip = null; otherTrips.Clear(); pastTrips.Clear(); invitations.Clear();
+        today = DateOnly.FromDateTime(DateTime.Now);
+        try
+        {
+            var tripsTask = ApiRequest.GetTrips();
+            var invitationsTask = ApiRequest.GetInvitations();
+            await Task.WhenAll(tripsTask, invitationsTask);
+            var tripsResult = await tripsTask;
+            var invitationsResult = await invitationsTask;
+            if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+            if (tripsResult.status && tripsResult.data != null)
+            {
+                var upcoming = tripsResult.data.Where(trip => trip.EndDate >= today)
+                    .OrderBy(trip => trip.StartDate).ThenBy(trip => trip.Id).ToList();
+                nextTrip = upcoming.FirstOrDefault();
+                otherTrips = upcoming.Skip(1).ToList();
+                pastTrips = tripsResult.data.Where(trip => trip.EndDate < today)
+                    .OrderByDescending(trip => trip.EndDate).ThenByDescending(trip => trip.Id).ToList();
+            }
+            else tripError = tripsResult.message;
+            if (invitationsResult.status && invitationsResult.data != null) invitations = invitationsResult.data;
+            else invitationError = invitationsResult.message;
+        }
+        finally { loading = false; }
+    }
+
+    private static string DateRange(Trip trip)
+    {
+        if (trip.StartDate == trip.EndDate) return trip.StartDate.ToString("d MMMM yyyy", russian);
+        if (trip.StartDate.Year == trip.EndDate.Year && trip.StartDate.Month == trip.EndDate.Month)
+            return $"{trip.StartDate.Day} — {trip.EndDate.ToString("d MMMM yyyy", russian)}";
+        return $"{trip.StartDate.ToString("d MMM yyyy", russian)} — {trip.EndDate.ToString("d MMM yyyy", russian)}";
+    }
+}

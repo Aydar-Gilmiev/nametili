@@ -1,0 +1,53 @@
+@page "/trips/delete/{TripId:int}"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Удаление поездки</PageTitle>
+<h1>Удаление поездки</h1>
+@if (isLoading) { <p role="status">Загрузка...</p> }
+else if (trip != null && canDelete)
+{
+    <p>Удалить поездку «@trip.Name»?</p>
+    <p>Предложения, расписание и финансовые записи этой поездки тоже будут удалены. Отменить это действие нельзя.</p>
+    <div class="actions">
+        <button class="btn btn-danger" disabled="@isSaving" @onclick="DeleteTrip">@(isSaving ? "Удаляем..." : "Да, удалить поездку")</button>
+        <a class="btn btn-outline-secondary" href="@($"/trips/{TripId}")">Отмена</a>
+    </div>
+}
+@if (errorMessage != "") { <p class="text-danger mt-3" role="alert">@errorMessage</p> }
+@if (!canDelete && !isLoading) { <a href="/trips">Вернуться к поездкам</a> }
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private Trip? trip;
+    private string errorMessage = "";
+    private bool isLoading = true;
+    private bool isSaving;
+    private bool canDelete;
+    protected override async Task OnParametersSetAsync()
+    {
+        isLoading = true;
+        canDelete = false;
+        errorMessage = "";
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        var result = await ApiRequest.GetTrip(TripId);
+        if (!result.status || result.data == null) errorMessage = result.message;
+        else
+        {
+            trip = result.data.Trip;
+            canDelete = result.data.Members.Any(member => member.Id == CurrentUser.User?.Id && member.Role == "Organizer");
+            if (!canDelete) errorMessage = "Удалять поездку может только организатор.";
+        }
+        isLoading = false;
+    }
+    private async Task DeleteTrip()
+    {
+        if (isSaving || !canDelete) return;
+        isSaving = true;
+        var result = await ApiRequest.DeleteTrip(TripId);
+        isSaving = false;
+        if (!result.status) { errorMessage = result.message; return; }
+        Navigation.NavigateTo("/trips");
+    }
+}

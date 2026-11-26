@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Наметили — совместные поездки</title>
+    <meta name="theme-color" content="#F7F2E9" />
+    <meta name="description" content="Наметили — совместное планирование поездок: приглашайте друзей, предлагайте места, голосуйте и рассчитывайте плановый бюджет." />
+    <base href="/" />
+    <link rel="stylesheet" href="css/bootstrap/bootstrap.min.css" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="lib/leaflet/leaflet.css" />
+    <link rel="icon" type="image/svg+xml" href="images/favicon.svg" />
+    <link rel="preload" href="fonts/Manrope.ttf" as="font" type="font/ttf" crossorigin />
+    <link href="TravelPlanner.Blazor.styles.css" rel="stylesheet" />
+</head>
+
+<body>
+    <div id="app">
+        <div class="startup" role="status">
+            <img src="images/nametili.svg" alt="Наметили" width="280" height="61" />
+            <p>Открываем ваши планы…</p>
+            <div class="loading-track" aria-hidden="true"></div>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui">
+        Произошла ошибка. Обновите страницу.
+        <a href="" class="reload">Обновить</a>
+        <a class="dismiss">🗙</a>
+    </div>
+    <script src="lib/leaflet/leaflet.js"></script>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+
+</html>

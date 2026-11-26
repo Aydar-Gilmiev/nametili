@@ -1,0 +1,113 @@
+@page "/trips/{TripId:int}"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Поездка</PageTitle>
+<p><a href="/trips">Все поездки</a></p>
+@if (errorMessage != "") { <p class="text-danger" role="alert">@errorMessage</p> }
+@if (successMessage != "") { <p class="text-success" role="status">@successMessage</p> }
+@if (isLoading) { <h1>Поездка</h1><p role="status">Загрузка...</p> }
+else if (details != null && CurrentUser.User != null)
+{
+    <h1>@details.Trip.Name</h1>
+    <TripLinks TripId="TripId" />
+    <p>@details.Trip.Destination · @details.Trip.StartDate.ToString("dd.MM.yyyy") — @details.Trip.EndDate.ToString("dd.MM.yyyy")</p>
+    <div class="mb-4"><TripExport TripId="TripId" /></div>
+    <div class="actions mb-4">
+        <a class="btn btn-primary" href="@($"/trips/{TripId}/proposals")">Предложения и бюджет</a>
+        <button class="btn btn-outline-secondary" disabled="@isSaving" @onclick="Load">Обновить</button>
+        @if (isOrganizer)
+        {
+            <a class="btn btn-outline-secondary" href="@($"/trips/edit/{TripId}")">Изменить поездку</a>
+            <a class="btn btn-outline-danger" href="@($"/trips/delete/{TripId}")">Удалить поездку</a>
+        }
+    </div>
+    <h2>Участники</h2>
+    <div class="table-responsive"><table class="table align-middle">
+        <thead><tr><th>Имя</th><th>Почта</th><th>Роль</th>@if (isOrganizer) { <th>Действия</th> }</tr></thead>
+        <tbody>
+        @foreach (var member in details.Members)
+        {
+            <tr @key="member.Id">
+                <td>@member.Name @(member.Id == CurrentUser.User.Id ? "(вы)" : "")</td><td>@member.Email</td>
+                <td>@(member.Role == "Organizer" ? "Организатор" : "Участник")</td>
+                @if (isOrganizer)
+                {
+                    <td><button class="btn btn-outline-secondary" disabled="@(isSaving || IsLastOrganizer(member))" @onclick="() => ChangeRole(member)">
+                        @(member.Role == "Organizer" ? "Сделать участником" : "Сделать организатором")
+                    </button></td>
+                }
+            </tr>
+        }
+        </tbody>
+    </table></div>
+    @if (isOrganizer)
+    {
+        <h2 class="mt-4">Пригласить участника</h2>
+        <form class="edit-form" @onsubmit="Invite" @onsubmit:preventDefault>
+            <fieldset disabled="@isSaving">
+                <div class="mb-3">
+                    <label class="form-label" for="invite-email">Электронная почта</label>
+                    <input id="invite-email" class="form-control" type="email" maxlength="254" required @bind="invitation.Email" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="invite-role">Роль в поездке</label>
+                    <select id="invite-role" class="form-select" @bind="invitation.Role">
+                        <option value="Participant">Участник</option><option value="Organizer">Организатор</option>
+                    </select>
+                </div>
+                <button class="btn btn-success" type="submit">@(isSaving ? "Сохраняем..." : "Пригласить")</button>
+            </fieldset>
+        </form>
+    }
+}
+else if (!isLoading) { <h1>Поездка недоступна</h1><a href="/login">Войти в аккаунт</a> }
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private TripDetailsData? details;
+    private InvitationRequest invitation = new();
+    private string errorMessage = "";
+    private string successMessage = "";
+    private bool isLoading;
+    private bool isSaving;
+    private bool isOrganizer => details?.Members.Any(member => member.Id == CurrentUser.User?.Id && member.Role == "Organizer") == true;
+    private bool IsLastOrganizer(TripMember member) => member.Role == "Organizer" && details?.Members.Count(value => value.Role == "Organizer") == 1;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        details = null;
+        await Load();
+    }
+    private async Task Load()
+    {
+        isLoading = true;
+        errorMessage = "";
+        var result = await ApiRequest.GetTrip(TripId);
+        if (result.status && result.data != null) details = result.data;
+        else { errorMessage = result.message; details = null; }
+        isLoading = false;
+    }
+    private async Task Invite()
+    {
+        if (isSaving || !isOrganizer) return;
+        isSaving = true;
+        errorMessage = successMessage = "";
+        var result = await ApiRequest.Invite(TripId, invitation);
+        if (!result.status) errorMessage = result.message;
+        else { invitation.Email = ""; successMessage = "Приглашение сохранено. Оно появится у пользователя в разделе «Приглашения»."; }
+        isSaving = false;
+    }
+    private async Task ChangeRole(TripMember member)
+    {
+        if (isSaving || !isOrganizer) return;
+        isSaving = true;
+        errorMessage = successMessage = "";
+        var result = await ApiRequest.ChangeRole(TripId, member.Id, member.Role == "Organizer" ? "Participant" : "Organizer");
+        if (!result.status) errorMessage = result.message;
+        else { await Load(); successMessage = "Роль изменена."; }
+        isSaving = false;
+    }
+}

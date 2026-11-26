@@ -1,0 +1,37 @@
+@page "/trips/add"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Создание поездки</PageTitle>
+<h1>Создание поездки</h1>
+<form class="edit-form" @onsubmit="AddTrip" @onsubmit:preventDefault>
+    <fieldset disabled="@isSaving">
+        <TripFields Model="tripRequest" />
+        <div class="actions">
+            <button type="submit" class="btn btn-success">@(isSaving ? "Сохраняем..." : "Создать поездку")</button>
+            <a class="btn btn-outline-secondary" href="/trips">Отмена</a>
+        </div>
+    </fieldset>
+</form>
+@if (errorMessage != "") { <p class="text-danger mt-3" role="alert">@errorMessage</p> }
+
+@code {
+    private TripRequest tripRequest = new();
+    private string errorMessage = "";
+    private bool isSaving;
+    protected override void OnInitialized()
+    {
+        if (CurrentUser.User == null) Navigation.NavigateTo("/login");
+    }
+    private async Task AddTrip()
+    {
+        if (isSaving) return;
+        if (tripRequest.EndDate < tripRequest.StartDate) { errorMessage = "Дата окончания должна быть не раньше даты начала."; return; }
+        isSaving = true;
+        var result = await ApiRequest.AddTrip(tripRequest);
+        isSaving = false;
+        if (!result.status || result.data == null) { errorMessage = result.message; return; }
+        Navigation.NavigateTo($"/trips/{result.data.Id}");
+    }
+}

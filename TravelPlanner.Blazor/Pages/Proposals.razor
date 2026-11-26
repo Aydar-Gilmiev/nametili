@@ -1,0 +1,115 @@
+@page "/trips/{TripId:int}/proposals"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Предложения и бюджет</PageTitle>
+<p><a href="@($"/trips/{TripId}")">Назад к поездке</a></p>
+<h1>Предложения и бюджет</h1>
+<TripLinks TripId="TripId" />
+@if (errorMessage != "") { <p class="text-danger" role="alert">@errorMessage</p> }
+@if (isLoading) { <p role="status">Загрузка предложений...</p> }
+else if (details != null && CurrentUser.User != null)
+{
+    <p>@details.Trip.Name</p>
+    <div class="actions mb-4">
+        <a class="btn btn-success" href="@($"/trips/{TripId}/proposals/add")">Добавить предложение</a>
+        <button class="btn btn-outline-secondary" disabled="@isSaving" @onclick="Load">Обновить</button>
+    </div>
+    @if (proposals.Count == 0) { <p>Предложений пока нет. Предложите место, жильё или занятие для группы.</p> }
+    @foreach (var proposal in proposals)
+    {
+        <section class="proposal-item" @key="proposal.Id">
+            <h2>@proposal.Title</h2>
+            <p class="description">@proposal.Description</p>
+            <p><span class="money">@proposal.PlannedCost.ToString("N2")</span> · @StatusName(proposal.Status)</p>
+            <p>Сумма голосов: @proposal.Score. Ваш голос: @(proposal.MyVote == 1 ? "за" : proposal.MyVote == -1 ? "против" : "не выбран").</p>
+            <div class="actions">
+                @if (!proposal.VotingClosed)
+                {
+                    <button class="btn @(proposal.MyVote == 1 ? "btn-success" : "btn-outline-success")" aria-pressed="@(proposal.MyVote == 1)" disabled="@isSaving" @onclick="() => Vote(proposal.Id, 1)">За</button>
+                    <button class="btn @(proposal.MyVote == -1 ? "btn-danger" : "btn-outline-danger")" aria-pressed="@(proposal.MyVote == -1)" disabled="@isSaving" @onclick="() => Vote(proposal.Id, -1)">Против</button>
+                }
+                else { <span>Голосование закрыто</span> }
+                @if (CanManage(proposal))
+                {
+                    @if (!proposal.VotingClosed && proposal.Status == "New" && proposal.VoteCount == 0)
+                    {
+                        <a class="btn btn-outline-secondary" href="@($"/trips/{TripId}/proposals/edit/{proposal.Id}")">Изменить</a>
+                    }
+                    <a class="btn btn-outline-danger" href="@($"/trips/{TripId}/proposals/delete/{proposal.Id}")">Удалить</a>
+                }
+                @if (isOrganizer)
+                {
+                    @if (proposal.Status != "Approved") { <button class="btn btn-primary" disabled="@isSaving" @onclick="() => SetStatus(proposal.Id, true)">Утвердить</button> }
+                    @if (proposal.Status != "Rejected") { <button class="btn btn-outline-secondary" disabled="@isSaving" @onclick="() => SetStatus(proposal.Id, false)">Отклонить</button> }
+                }
+            </div>
+            <ProposalComments TripId="TripId" ProposalId="proposal.Id" IsOrganizer="isOrganizer" />
+        </section>
+    }
+    <h2 class="mt-4">Плановый бюджет</h2>
+    <p>Учитываются только утверждённые предложения. Все суммы должны быть в одной валюте.</p>
+    @if (budget != null)
+    {
+        <p>Всего: <strong class="money">@budget.Total.ToString("N2")</strong></p>
+    }
+}
+else if (!isLoading) { <a href="/trips">Вернуться к поездкам</a> }
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private TripDetailsData? details;
+    private List<Proposal> proposals = new();
+    private Budget? budget;
+    private string errorMessage = "";
+    private bool isLoading;
+    private bool isSaving;
+    private bool isOrganizer => details?.Members.Any(member => member.Id == CurrentUser.User?.Id && member.Role == "Organizer") == true;
+    private bool CanManage(Proposal proposal) => isOrganizer || proposal.UserId == CurrentUser.User?.Id;
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        await Load();
+    }
+    private async Task Load()
+    {
+        isLoading = true;
+        details = null;
+        errorMessage = "";
+        var tripResult = await ApiRequest.GetTrip(TripId);
+        if (!tripResult.status || tripResult.data == null) { errorMessage = tripResult.message; isLoading = false; return; }
+        var result = await ApiRequest.GetProposals(TripId);
+        if (!result.status || result.data == null) { errorMessage = result.message; isLoading = false; return; }
+        var budgetResult = await ApiRequest.GetBudget(TripId);
+        budget = budgetResult.data;
+        if (!budgetResult.status) errorMessage = budgetResult.message;
+        proposals = result.data;
+        details = tripResult.data;
+        isLoading = false;
+    }
+    private async Task Vote(int proposalId, int value)
+    {
+        if (isSaving) return;
+        isSaving = true;
+        var result = await ApiRequest.Vote(TripId, proposalId, value);
+        await Load();
+        if (!result.status) errorMessage = result.message;
+        isSaving = false;
+    }
+    private async Task SetStatus(int proposalId, bool approve)
+    {
+        if (isSaving || !isOrganizer) return;
+        isSaving = true;
+        var result = await ApiRequest.SetProposalStatus(TripId, proposalId, approve ? "Approved" : "Rejected");
+        await Load();
+        if (!result.status) errorMessage = result.message;
+        isSaving = false;
+    }
+    private string StatusName(string status)
+    {
+        if (status == "Approved") return "Утверждено";
+        if (status == "Rejected") return "Отклонено";
+        return "На обсуждении";
+    }
+}

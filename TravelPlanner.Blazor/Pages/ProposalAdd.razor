@@ -1,0 +1,39 @@
+@page "/trips/{TripId:int}/proposals/add"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Новое предложение</PageTitle>
+<h1>Новое предложение</h1>
+<form class="edit-form" @onsubmit="AddProposal" @onsubmit:preventDefault>
+    <fieldset disabled="@isSaving">
+        <ProposalFields Model="proposalRequest" />
+        <div class="actions">
+            <button type="submit" class="btn btn-success">@(isSaving ? "Сохраняем..." : "Добавить предложение")</button>
+            <a class="btn btn-outline-secondary" href="@($"/trips/{TripId}/proposals")">Отмена</a>
+        </div>
+    </fieldset>
+</form>
+@if (errorMessage != "") { <p class="text-danger mt-3" role="alert">@errorMessage</p> }
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private ProposalRequest proposalRequest = new();
+    private string errorMessage = "";
+    private bool isSaving;
+    protected override void OnParametersSet()
+    {
+        if (CurrentUser.User == null) Navigation.NavigateTo("/login");
+        proposalRequest = new();
+        errorMessage = "";
+    }
+    private async Task AddProposal()
+    {
+        if (isSaving) return;
+        isSaving = true;
+        var result = await ApiRequest.AddProposal(TripId, proposalRequest);
+        isSaving = false;
+        if (!result.status) { errorMessage = result.message; return; }
+        Navigation.NavigateTo($"/trips/{TripId}/proposals");
+    }
+}

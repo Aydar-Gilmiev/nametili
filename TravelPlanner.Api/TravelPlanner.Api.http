@@ -1,0 +1,288 @@
+# Укажите фактический адрес из строки "Now listening on" при запуске API.
+@host = http://localhost:5101
+
+### 1. Регистрация организатора. При повторном запуске используйте вход ниже.
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "name": "Организатор",
+  "email": "organizer.demo@example.com",
+  "password": "Demo-Password-123"
+}
+
+> {%
+if (response.status === 200) {
+    client.global.set("organizerToken", response.body.token);
+    client.global.set("organizerId", response.body.user.id);
+}
+%}
+
+### Вход организатора
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "organizer.demo@example.com",
+  "password": "Demo-Password-123"
+}
+
+> {%
+if (response.status === 200) {
+    client.global.set("organizerToken", response.body.token);
+    client.global.set("organizerId", response.body.user.id);
+}
+%}
+
+### 2. Регистрация участника
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "name": "Участник",
+  "email": "participant.demo@example.com",
+  "password": "Demo-Password-123"
+}
+
+> {%
+if (response.status === 200) {
+    client.global.set("participantToken", response.body.token);
+    client.global.set("participantId", response.body.user.id);
+}
+%}
+
+### Вход участника
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "participant.demo@example.com",
+  "password": "Demo-Password-123"
+}
+
+> {%
+if (response.status === 200) {
+    client.global.set("participantToken", response.body.token);
+    client.global.set("participantId", response.body.user.id);
+}
+%}
+
+### 3. Создание поездки
+POST {{host}}/api/trips
+Authorization: Bearer {{organizerToken}}
+Content-Type: application/json
+
+{
+  "name": "Поездка в Казань",
+  "destination": "Казань",
+  "startDate": "2026-11-01",
+  "endDate": "2026-11-03"
+}
+
+> {% if (response.status === 200) client.global.set("tripId", response.body.id); %}
+
+### 4. Приглашение участника
+POST {{host}}/api/trips/{{tripId}}/invitations
+Authorization: Bearer {{organizerToken}}
+Content-Type: application/json
+
+{
+  "email": "participant.demo@example.com",
+  "role": "Participant"
+}
+
+### 5. Получение приглашения
+GET {{host}}/api/invitations/mine
+Authorization: Bearer {{participantToken}}
+
+> {%
+if (response.status === 200 && response.body.length > 0)
+    client.global.set("invitationId", response.body[0].id);
+%}
+
+### 6. Принятие приглашения
+POST {{host}}/api/invitations/{{invitationId}}/accept
+Authorization: Bearer {{participantToken}}
+
+### 7. Предложение участника
+POST {{host}}/api/trips/{{tripId}}/proposals
+Authorization: Bearer {{participantToken}}
+Content-Type: application/json
+
+{
+  "title": "Посетить музей",
+  "description": "Экскурсия по основной экспозиции",
+  "category": "Музеи",
+  "plannedCost": 1000
+}
+
+> {% if (response.status === 200) client.global.set("proposalId", response.body.id); %}
+
+### Изменение предложения до голосов
+PUT {{host}}/api/trips/{{tripId}}/proposals/{{proposalId}}
+Authorization: Bearer {{participantToken}}
+Content-Type: application/json
+
+{
+  "title": "Посетить музей",
+  "description": "Обновлённый план экскурсии",
+  "category": "Музеи",
+  "plannedCost": 1200
+}
+
+### 8. Голос организатора
+PUT {{host}}/api/trips/{{tripId}}/proposals/{{proposalId}}/vote
+Authorization: Bearer {{organizerToken}}
+Content-Type: application/json
+
+{ "value": 1 }
+
+### 9. Утверждение предложения
+PATCH {{host}}/api/trips/{{tripId}}/proposals/{{proposalId}}/status
+Authorization: Bearer {{organizerToken}}
+Content-Type: application/json
+
+{ "status": "Approved" }
+
+### Плановый бюджет
+GET {{host}}/api/trips/{{tripId}}/proposals/budget
+Authorization: Bearer {{participantToken}}
+
+### 10. Добавление события. Только организатор.
+POST {{host}}/api/trips/{{tripId}}/schedule
+Authorization: Bearer {{organizerToken}}
+Content-Type: application/json
+
+{
+  "title": "Экскурсия",
+  "proposalId": {{proposalId}},
+  "startAt": "2026-11-01T10:00:00Z",
+  "endAt": "2026-11-01T11:00:00Z"
+}
+
+> {% if (response.status === 200) client.global.set("scheduleId", response.body.id); %}
+
+### Расписание одного дня (UTC)
+GET {{host}}/api/trips/{{tripId}}/schedule?date=2026-11-01
+Authorization: Bearer {{participantToken}}
+
+### Изменение времени события
+PUT {{host}}/api/trips/{{tripId}}/schedule/{{scheduleId}}
+Authorization: Bearer {{organizerToken}}
+Content-Type: application/json
+
+{
+  "title": "Экскурсия",
+  "proposalId": {{proposalId}},
+  "startAt": "2026-11-01T11:00:00Z",
+  "endAt": "2026-11-01T12:00:00Z"
+}
+
+### 11. Расход с равным делением: 120.01 = 60.01 + 60.00.
+POST {{host}}/api/trips/{{tripId}}/expenses
+Authorization: Bearer {{organizerToken}}
+Content-Type: application/json
+
+{
+  "title": "Общий обед",
+  "payerUserId": {{organizerId}},
+  "amount": 120.01,
+  "occurredOn": "2026-11-01",
+  "splitMode": "Equal",
+  "participantUserIds": [{{organizerId}}, {{participantId}}],
+  "shares": []
+}
+
+> {% if (response.status === 200) client.global.set("expenseId", response.body.id); %}
+
+### Расходы с долями
+GET {{host}}/api/trips/{{tripId}}/expenses
+Authorization: Bearer {{participantToken}}
+
+### Балансы: организатору должны 60.00, участник должен 60.00.
+GET {{host}}/api/trips/{{tripId}}/balances
+Authorization: Bearer {{participantToken}}
+
+### 12. Возврат долга
+POST {{host}}/api/trips/{{tripId}}/repayments
+Authorization: Bearer {{participantToken}}
+Content-Type: application/json
+
+{
+  "fromUserId": {{participantId}},
+  "toUserId": {{organizerId}},
+  "amount": 60.00,
+  "paidOn": "2026-11-02"
+}
+
+> {% if (response.status === 200) client.global.set("repaymentId", response.body.id); %}
+
+### После возврата оба баланса равны нулю.
+GET {{host}}/api/trips/{{tripId}}/balances
+Authorization: Bearer {{organizerToken}}
+
+### Список возвратов
+GET {{host}}/api/trips/{{tripId}}/repayments
+Authorization: Bearer {{participantToken}}
+
+### Пример исправления возврата: вместо 60 вернули 50.
+PUT {{host}}/api/trips/{{tripId}}/repayments/{{repaymentId}}
+Authorization: Bearer {{participantToken}}
+Content-Type: application/json
+
+{
+  "fromUserId": {{participantId}},
+  "toUserId": {{organizerId}},
+  "amount": 50,
+  "paidOn": "2026-11-02"
+}
+
+### Пример ручных долей — изменение существующего расхода.
+PUT {{host}}/api/trips/{{tripId}}/expenses/{{expenseId}}
+Authorization: Bearer {{organizerToken}}
+Content-Type: application/json
+
+{
+  "title": "Обед — уточнённые доли",
+  "payerUserId": {{organizerId}},
+  "amount": 120.01,
+  "occurredOn": "2026-11-01",
+  "splitMode": "Custom",
+  "participantUserIds": [],
+  "shares": [
+    { "userId": {{organizerId}}, "amount": 50.01 },
+    { "userId": {{participantId}}, "amount": 70.00 }
+  ]
+}
+
+### Удаление возврата: баланс снова изменится.
+DELETE {{host}}/api/trips/{{tripId}}/repayments/{{repaymentId}}
+Authorization: Bearer {{participantToken}}
+
+### Удаление расхода с его долями
+DELETE {{host}}/api/trips/{{tripId}}/expenses/{{expenseId}}
+Authorization: Bearer {{organizerToken}}
+
+### Удаление события
+DELETE {{host}}/api/trips/{{tripId}}/schedule/{{scheduleId}}
+Authorization: Bearer {{organizerToken}}
+
+### Удаление предложения
+DELETE {{host}}/api/trips/{{tripId}}/proposals/{{proposalId}}
+Authorization: Bearer {{participantToken}}
+
+### Изменение поездки
+PUT {{host}}/api/trips/{{tripId}}
+Authorization: Bearer {{organizerToken}}
+Content-Type: application/json
+
+{
+  "name": "Поездка в Казань — уточнено",
+  "destination": "Казань",
+  "startDate": "2026-11-01",
+  "endDate": "2026-11-03"
+}
+
+### Удаляет демонстрационную поездку и все её данные.
+DELETE {{host}}/api/trips/{{tripId}}
+Authorization: Bearer {{organizerToken}}

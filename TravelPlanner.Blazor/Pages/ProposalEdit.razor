@@ -1,0 +1,65 @@
+@page "/trips/{TripId:int}/proposals/edit/{ProposalId:int}"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Изменение предложения</PageTitle>
+<h1>Изменение предложения</h1>
+@if (isLoading) { <p role="status">Загрузка...</p> }
+else if (canEdit)
+{
+    <p>Предложение можно изменить только до первого голоса и до решения организатора.</p>
+    <form class="edit-form" @onsubmit="UpdateProposal" @onsubmit:preventDefault>
+        <fieldset disabled="@isSaving">
+            <ProposalFields Model="proposalRequest" />
+            <div class="actions">
+                <button type="submit" class="btn btn-primary">@(isSaving ? "Сохраняем..." : "Сохранить изменения")</button>
+                <a class="btn btn-outline-secondary" href="@($"/trips/{TripId}/proposals")">Отмена</a>
+            </div>
+        </fieldset>
+    </form>
+}
+@if (errorMessage != "") { <p class="text-danger mt-3" role="alert">@errorMessage</p> }
+@if (!canEdit && !isLoading) { <a href="@($"/trips/{TripId}/proposals")">К предложениям</a> }
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    [Parameter] public int ProposalId { get; set; }
+    private ProposalRequest proposalRequest = new();
+    private string errorMessage = "";
+    private bool isLoading = true;
+    private bool isSaving;
+    private bool canEdit;
+    protected override async Task OnParametersSetAsync()
+    {
+        canEdit = false;
+        isLoading = true;
+        errorMessage = "";
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        var tripResult = await ApiRequest.GetTrip(TripId);
+        var result = await ApiRequest.GetProposals(TripId);
+        var proposal = result.data?.FirstOrDefault(value => value.Id == ProposalId);
+        if (!tripResult.status) errorMessage = tripResult.message;
+        else if (!result.status) errorMessage = result.message;
+        else if (proposal == null) errorMessage = "Предложение не найдено.";
+        else if (proposal.UserId != CurrentUser.User?.Id && tripResult.data?.Members.Any(member => member.Id == CurrentUser.User?.Id && member.Role == "Organizer") != true)
+            errorMessage = "Изменять предложение может автор или организатор.";
+        else if (proposal.VotingClosed || proposal.Status != "New") errorMessage = "Это предложение уже закрыто для изменений.";
+        else if (proposal.VoteCount > 0) errorMessage = "За предложение уже голосовали. Редактирование недоступно.";
+        else
+        {
+            proposalRequest = new ProposalRequest { Title = proposal.Title, Description = proposal.Description, PlannedCost = proposal.PlannedCost };
+            canEdit = true;
+        }
+        isLoading = false;
+    }
+    private async Task UpdateProposal()
+    {
+        if (isSaving || !canEdit) return;
+        isSaving = true;
+        var result = await ApiRequest.UpdateProposal(TripId, ProposalId, proposalRequest);
+        isSaving = false;
+        if (!result.status) { errorMessage = result.message; return; }
+        Navigation.NavigateTo($"/trips/{TripId}/proposals");
+    }
+}

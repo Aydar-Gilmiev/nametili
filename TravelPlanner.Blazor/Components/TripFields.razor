@@ -1,0 +1,20 @@
+<div class="mb-3">
+    <label for="trip-name" class="form-label">Название поездки</label>
+    <input id="trip-name" class="form-control" maxlength="200" required @bind="Model.Name" />
+</div>
+<div class="mb-3">
+    <label for="trip-destination" class="form-label">Направление</label>
+    <input id="trip-destination" class="form-control" maxlength="300" @bind="Model.Destination" />
+</div>
+<div class="mb-3">
+    <label for="trip-start" class="form-label">Дата начала</label>
+    <input id="trip-start" class="form-control" type="date" required @bind="Model.StartDate" />
+</div>
+<div class="mb-3">
+    <label for="trip-end" class="form-label">Дата окончания</label>
+    <input id="trip-end" class="form-control" type="date" required @bind="Model.EndDate" />
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TripRequest Model { get; set; } = new();
+}

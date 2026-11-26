@@ -1,0 +1,159 @@
+@page "/trips/{TripId:int}/schedule"
+@implements IAsyncDisposable
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>Расписание — Наметили</PageTitle>
+<p><a href="@($"/trips/{TripId}")">Назад к поездке</a></p>
+<h1>Расписание</h1>
+<TripLinks TripId="TripId" />
+@if (error != "") { <p role="alert">@error</p> }
+@if (notice != "") { <p role="status" class="text-success">@notice</p> }
+@if (loading) { <p role="status">Загрузка расписания…</p> }
+else if (details != null)
+{
+    <div class="page-heading"><p>@details.Trip.Name · Время UTC</p><TripExport TripId="TripId" /></div>
+    <p class="text-muted">Все часы на этой странице указаны в UTC. При импорте календарь покажет время в вашем часовом поясе.</p>
+    <div class="planner-layout" @ref="root">
+        <section aria-label="События поездки">
+            <div class="actions mb-3">
+                <label for="schedule-day">День поездки</label>
+                <input id="schedule-day" class="form-control compact-input" type="date" min="@DateText(details.Trip.StartDate)" max="@DateText(details.Trip.EndDate)" @bind="day" @bind:after="DayChanged" disabled="@busy" />
+                <button class="btn btn-outline-secondary" disabled="@busy" @onclick="Reload">Обновить</button>
+            </div>
+            @if (organizer) { <p class="text-muted">Перетащите событие на день ниже, чтобы перенести его с сохранением времени и длительности. Или нажмите «Изменить» и укажите дату.</p> }
+            <div class="day-picker" aria-label="Дни для переноса событий">
+                @foreach (var date in NearbyDays())
+                {
+                    <button type="button" class="day-target @(date == day ? "selected" : "")" disabled="@busy" @onclick="() => SelectDay(date)"
+                        @ondragover:preventDefault @ondrop:preventDefault @ondrop="() => Move(date)">
+                        @date.ToString("dd.MM")
+                    </button>
+                }
+            </div>
+            <h2 class="mt-4">@day.ToString("dd.MM.yyyy")</h2>
+            @if (!DayItems().Any()) { <div class="empty-state"><p>На этот день ничего не запланировано.</p></div> }
+            @foreach (var item in DayItems())
+            {
+                <article class="schedule-event" data-schedule-id="@item.Id" draggable="@(organizer && !busy ? "true" : "false")" @ondragstart="() => dragging = item.Id" @ondragend="() => dragging = null" @key="item.Id">
+                    <p class="event-time">@item.StartAt.ToString("dd.MM HH:mm") — @item.EndAt.ToString("dd.MM HH:mm") UTC</p>
+                    <h3>@item.Title</h3>
+                    @if (organizer)
+                    {
+                        <div class="actions"><button class="btn btn-outline-secondary btn-sm" disabled="@busy" @onclick="() => Edit(item)">Изменить</button><button class="btn btn-outline-danger btn-sm" disabled="@busy" @onclick="() => deleting = item.Id">Удалить</button></div>
+                        @if (deleting == item.Id) { <div class="confirm-action"><p>Удалить событие из расписания?</p><div class="actions"><button class="btn btn-danger" disabled="@busy" @onclick="() => Delete(item.Id)">Удалить событие</button><button class="btn btn-outline-secondary" disabled="@busy" @onclick="() => deleting = null">Отмена</button></div></div> }
+                    }
+                </article>
+            }
+        </section>
+        @if (organizer)
+        {
+            <section>
+                <h2>@(editing == 0 ? "Новое событие" : "Изменить событие")</h2>
+                <form class="edit-form planner-form" @onsubmit="Save" @onsubmit:preventDefault>
+                    <fieldset disabled="@busy">
+                        <label class="form-label" for="event-proposal">Утверждённое предложение</label>
+                        <select id="event-proposal" class="form-select mb-3" value="@proposalId" @onchange="SelectProposal"><option value="">Без привязки</option>@foreach (var proposal in proposals) { <option value="@proposal.Id">@proposal.Title</option> }</select>
+                        <label class="form-label" for="event-title">Название</label>
+                        <input id="event-title" class="form-control mb-3" required maxlength="200" @bind="title" />
+                        <label class="form-label" for="event-start">Начало (UTC)</label>
+                        <input id="event-start" class="form-control mb-3" type="datetime-local" required @bind="start" />
+                        <label class="form-label" for="event-end">Окончание (UTC)</label>
+                        <input id="event-end" class="form-control mb-3" type="datetime-local" required @bind="end" />
+                        <div class="actions"><button class="btn btn-primary" type="submit">@(busy ? "Сохраняем…" : "Сохранить событие")</button><button class="btn btn-outline-secondary" type="button" @onclick="Reset">Отмена</button></div>
+                    </fieldset>
+                </form>
+            </section>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private TripDetailsData? details;
+    private List<ScheduleItem> items = new();
+    private List<Proposal> proposals = new();
+    private bool loading = true, busy, organizer;
+    private int editing;
+    private int? proposalId, dragging, deleting;
+    private DateOnly day;
+    private DateTime start, end;
+    private string title = "", error = "", notice = "";
+    private ElementReference root;
+    private IJSObjectReference? module;
+    private static string DateText(DateOnly value) => value.ToString("yyyy-MM-dd");
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        loading = true; details = null; error = notice = "";
+        var result = await ApiRequest.GetTrip(TripId);
+        if (!result.status || result.data == null) { error = result.message; loading = false; return; }
+        details = result.data; organizer = details.Members.Any(value => value.Id == CurrentUser.User.Id && value.Role == "Organizer");
+        day = details.Trip.StartDate; Reset(); await Reload(); loading = false;
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (loading || details == null) return;
+        module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/schedule.js");
+        await module.InvokeVoidAsync("init", root);
+    }
+    private IEnumerable<DateOnly> NearbyDays()
+    {
+        if (details == null) yield break;
+        var first = Math.Max(details.Trip.StartDate.DayNumber, day.DayNumber - 3);
+        for (var number = first; number <= Math.Min(details.Trip.EndDate.DayNumber, first + 6); number++) yield return DateOnly.FromDayNumber(number);
+    }
+    private IEnumerable<ScheduleItem> DayItems() => items.Where(value => value.StartAt < day.ToDateTime(TimeOnly.MaxValue) && value.EndAt > day.ToDateTime(TimeOnly.MinValue));
+    private async Task Reload()
+    {
+        var result = await ApiRequest.GetSchedule(TripId);
+        if (result.status && result.data != null) items = result.data; else error = result.message;
+        var proposalResult = await ApiRequest.GetProposals(TripId);
+        if (proposalResult.status && proposalResult.data != null) proposals = proposalResult.data.Where(value => value.Status == "Approved").ToList();
+        else error = proposalResult.message;
+    }
+    private void Reset() { editing = 0; proposalId = null; title = ""; start = day.ToDateTime(new TimeOnly(10, 0)); end = start.AddHours(1); }
+    private void DayChanged() { if (editing == 0) Reset(); }
+    private void SelectDay(DateOnly value) { day = value; DayChanged(); }
+    private void Edit(ScheduleItem item) { editing = item.Id; title = item.Title; proposalId = item.ProposalId; start = item.StartAt; end = item.EndAt; error = notice = ""; }
+    private void SelectProposal(ChangeEventArgs args)
+    {
+        proposalId = int.TryParse(args.Value?.ToString(), out var id) ? id : null;
+        if (proposalId.HasValue) title = proposals.First(value => value.Id == proposalId).Title;
+    }
+    private static DateTimeOffset Utc(DateTime value) => new(DateTime.SpecifyKind(value, DateTimeKind.Utc));
+    private async Task Save()
+    {
+        if (busy || !organizer) return;
+        error = notice = "";
+        if (end <= start) { error = "Окончание должно быть позже начала."; return; }
+        busy = true;
+        var request = new ScheduleRequest { Title = title, ProposalId = proposalId, StartAt = Utc(start), EndAt = Utc(end) };
+        var result = editing == 0 ? await ApiRequest.AddScheduleItem(TripId, request) : await ApiRequest.UpdateScheduleItem(TripId, editing, request);
+        if (result.status) { day = DateOnly.FromDateTime(start); Reset(); await Reload(); notice = "Событие сохранено."; } else error = result.message;
+        busy = false;
+    }
+    private async Task Move(DateOnly date)
+    {
+        if (busy || !organizer || !dragging.HasValue) return;
+        var item = items.FirstOrDefault(value => value.Id == dragging); dragging = null;
+        if (item == null) return;
+        var moved = date.ToDateTime(TimeOnly.FromDateTime(item.StartAt));
+        if (item.EndAt - item.StartAt > DateTime.MaxValue - moved) { error = "На эту дату событие перенести нельзя: окончание выходит за допустимый диапазон."; return; }
+        var request = new ScheduleRequest { Title = item.Title, ProposalId = item.ProposalId, StartAt = Utc(moved), EndAt = Utc(moved.Add(item.EndAt - item.StartAt)) };
+        busy = true; error = notice = "";
+        var result = await ApiRequest.UpdateScheduleItem(TripId, item.Id, request);
+        if (result.status) { SelectDay(date); await Reload(); notice = "Событие перенесено."; } else { await Reload(); error = result.message; }
+        busy = false;
+    }
+    private async Task Delete(int id)
+    {
+        if (busy) return; busy = true; error = notice = "";
+        var result = await ApiRequest.DeleteScheduleItem(TripId, id);
+        if (result.status) { deleting = null; if (editing == id) Reset(); await Reload(); notice = "Событие удалено."; } else error = result.message;
+        busy = false;
+    }
+    public async ValueTask DisposeAsync() { if (module != null) { await module.InvokeVoidAsync("dispose", root); await module.DisposeAsync(); } }
+}

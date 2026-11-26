@@ -1,0 +1,43 @@
+@page "/login"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Вход</PageTitle>
+<h1>Снова к планам</h1>
+<p class="auth-note">Войдите, чтобы открыть поездки и предложения вашей группы.</p>
+<form class="edit-form" @onsubmit="Authorize" @onsubmit:preventDefault>
+    <fieldset disabled="@isSaving">
+        <div class="mb-3">
+            <label for="login-email" class="form-label">Электронная почта</label>
+            <input id="login-email" class="form-control" type="email" autocomplete="username" required @bind="authRequest.Email" />
+        </div>
+        <div class="mb-3">
+            <label for="login-password" class="form-label">Пароль</label>
+            <input id="login-password" class="form-control" type="password" autocomplete="current-password" required @bind="authRequest.Password" />
+        </div>
+        <button class="btn btn-primary" type="submit">@(isSaving ? "Входим..." : "Войти")</button>
+    </fieldset>
+</form>
+@if (errorMessage != "") { <p class="text-danger mt-3" role="alert">@errorMessage</p> }
+<p class="mt-3">Нет аккаунта? <a href="/register">Зарегистрироваться</a></p>
+
+@code {
+    private AuthRequest authRequest = new();
+    private string errorMessage = "";
+    private bool isSaving;
+    private async Task Authorize()
+    {
+        if (isSaving) return;
+        isSaving = true;
+        errorMessage = "";
+        try
+        {
+            var result = await ApiRequest.Authorize(authRequest);
+            if (!result.status || result.data == null) { errorMessage = result.message; return; }
+            await CurrentUser.SignIn(result.data);
+            Navigation.NavigateTo("/trips");
+        }
+        finally { isSaving = false; }
+    }
+}

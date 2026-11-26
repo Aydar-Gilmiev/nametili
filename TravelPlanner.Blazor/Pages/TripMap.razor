@@ -1,0 +1,135 @@
+@page "/trips/{TripId:int}/map"
+@implements IAsyncDisposable
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IConfiguration Configuration
+
+<PageTitle>Карта поездки — Наметили</PageTitle>
+<p><a href="@($"/trips/{TripId}")">Назад к поездке</a></p>
+<h1>Карта поездки</h1>
+<TripLinks TripId="TripId" />
+@if (error != "") { <p role="alert">@error</p> }
+@if (loading) { <p role="status">Загрузка мест…</p> }
+else if (allowed)
+{
+    <p class="text-muted">Нажмите на карту, чтобы выбрать точку. Название и координаты можно ввести вручную.</p>
+    @if (mapError != "") { <p role="status">@mapError</p> }
+    <div class="trip-map" @ref="mapElement" role="region" aria-label="Карта мест поездки"></div>
+    <p class="map-credit">Подложка загружается с OpenStreetMap. <a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noopener noreferrer">Сообщить об ошибке карты</a></p>
+    <div class="collaboration-columns">
+        <section>
+            <h2>@(editing.Id == 0 ? "Добавить место" : "Изменить место")</h2>
+            <form class="edit-form" @onsubmit="Save" @onsubmit:preventDefault>
+                <fieldset disabled="@saving">
+                    <label for="place-title" class="form-label">Название</label>
+                    <input id="place-title" class="form-control mb-3" required maxlength="200" @bind="editing.Title" />
+                    <label for="place-note" class="form-label">Заметка</label>
+                    <textarea id="place-note" class="form-control mb-3" maxlength="1000" @bind="editing.Note"></textarea>
+                    <label for="place-latitude" class="form-label">Широта</label>
+                    <input id="place-latitude" class="form-control mb-3" type="number" required min="-90" max="90" step="any" @bind="editing.Latitude" />
+                    <label for="place-longitude" class="form-label">Долгота</label>
+                    <input id="place-longitude" class="form-control mb-3" type="number" required min="-180" max="180" step="any" @bind="editing.Longitude" />
+                    <div class="actions"><button class="btn btn-primary" type="submit">@(saving ? "Сохраняем…" : "Сохранить место")</button>
+                    @if (editing.Id != 0) { <button type="button" class="btn btn-outline-secondary" @onclick="Cancel">Отмена</button> }</div>
+                </fieldset>
+            </form>
+        </section>
+        <section>
+            <h2>Отмеченные места</h2>
+            @if (places.Count == 0) { <p>Мест пока нет. Добавьте первую точку на карте.</p> }
+            @foreach (var place in places)
+            {
+                <article class="place-item" @key="place.Id">
+                    <h3>@place.Title</h3><p class="description">@place.Note</p>
+                    <p class="text-muted">@place.Latitude.ToString("F5"), @place.Longitude.ToString("F5")</p>
+                    <div class="actions"><button class="btn btn-outline-secondary btn-sm" @onclick="() => Focus(place)">На карте</button>
+                    @if (place.UserId == CurrentUser.User?.Id || organizer)
+                    {
+                        <button class="btn btn-outline-secondary btn-sm" disabled="@saving" @onclick="() => Edit(place)">Изменить</button>
+                        <button class="btn btn-outline-danger btn-sm" disabled="@saving" @onclick="() => deletingId = place.Id">Удалить</button>
+                    }</div>
+                    @if (deletingId == place.Id)
+                    {
+                        <p class="mt-3">Удалить это место?</p><div class="actions"><button class="btn btn-danger btn-sm" disabled="@saving" @onclick="() => Delete(place.Id)">Удалить место</button><button class="btn btn-outline-secondary btn-sm" @onclick="() => deletingId = null">Отмена</button></div>
+                    }
+                </article>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private ElementReference mapElement;
+    private IJSObjectReference? module;
+    private DotNetObjectReference<TripMap>? receiver;
+    private List<TripPlace> places = new();
+    private TripPlace editing = new();
+    private bool loading = true, saving, allowed, organizer, mapReady, disposed;
+    private int? deletingId;
+    private int activeTripId;
+    private string error = "", mapError = "";
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        if (activeTripId != TripId)
+        {
+            if (module != null && mapReady) await module.InvokeVoidAsync("dispose", mapElement);
+            mapReady = false; activeTripId = TripId; editing = new(); places.Clear(); error = mapError = "";
+        }
+        loading = true; allowed = false;
+        var result = await ApiRequest.GetTrip(TripId);
+        if (!result.status || result.data == null) { error = result.message; loading = false; return; }
+        organizer = result.data.Members.Any(member => member.Id == CurrentUser.User.Id && member.Role == "Organizer");
+        allowed = true;
+        await Load(); loading = false;
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!allowed || loading || mapReady || disposed) return;
+        try
+        {
+            module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/tripMap.js");
+            receiver ??= DotNetObjectReference.Create(this);
+            await module.InvokeVoidAsync("create", mapElement, receiver, new { tileUrl = Configuration["MapTileUrl"] ?? "https://tile.openstreetmap.org/{z}/{x}/{y}.png" });
+            mapReady = true;
+            await module.InvokeVoidAsync("show", mapElement, places, true);
+        }
+        catch (JSException) { mapReady = true; mapError = "Подложка карты недоступна. Список мест и ввод координат продолжают работать."; await InvokeAsync(StateHasChanged); }
+    }
+    [JSInvokable] public Task SelectPoint(double latitude, double longitude) => InvokeAsync(() => { editing.Latitude = latitude; editing.Longitude = longitude; StateHasChanged(); });
+    [JSInvokable] public Task MapUnavailable() => InvokeAsync(() => { if (!disposed) { mapError = "Не удалось загрузить часть карты. Проверьте интернет; координаты можно ввести вручную."; StateHasChanged(); } });
+    private async Task Load()
+    {
+        var result = await ApiRequest.GetPlaces(TripId);
+        if (result.status && result.data != null) places = result.data; else error = result.message;
+        if (module != null && mapReady) await module.InvokeVoidAsync("show", mapElement, places, false);
+    }
+    private void Edit(TripPlace place) { editing = new TripPlace { Id = place.Id, Title = place.Title, Note = place.Note, Latitude = place.Latitude, Longitude = place.Longitude }; }
+    private void Cancel() { editing = new(); }
+    private async Task Focus(TripPlace place) { if (module != null && mapReady) await module.InvokeVoidAsync("focus", mapElement, place.Latitude, place.Longitude); }
+    private async Task Save()
+    {
+        if (saving) return;
+        saving = true; error = "";
+        var result = editing.Id == 0 ? await ApiRequest.AddPlace(TripId, editing) : await ApiRequest.UpdatePlace(TripId, editing);
+        if (result.status) { Cancel(); await Load(); } else error = result.message;
+        saving = false;
+    }
+    private async Task Delete(int id)
+    {
+        if (saving) return;
+        saving = true; error = "";
+        var result = await ApiRequest.DeletePlace(TripId, id);
+        if (result.status) { deletingId = null; if (editing.Id == id) Cancel(); await Load(); } else error = result.message;
+        saving = false;
+    }
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        if (module != null) { try { await module.InvokeVoidAsync("dispose", mapElement); } catch (JSException) { } await module.DisposeAsync(); }
+        receiver?.Dispose();
+    }
+}

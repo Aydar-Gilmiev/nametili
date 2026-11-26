@@ -1,0 +1,31 @@
+@implements IAsyncDisposable
+@inject ApiRequest ApiRequest
+@inject IJSRuntime JS
+
+<div class="actions">
+    <button type="button" class="btn btn-outline-secondary" disabled="@busy" @onclick="Download">Скачать PDF</button>
+    @if (busy) { <span role="status">Готовим файл…</span> }
+</div>
+@if (error != "") { <p role="alert" class="mt-3">@error</p> }
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private bool busy;
+    private string error = "";
+    private IJSObjectReference? module;
+    private async Task Download()
+    {
+        if (busy) return;
+        busy = true; error = "";
+        try
+        {
+            var result = await ApiRequest.ExportTrip(TripId);
+            if (!result.status || result.data == null) { error = result.message; return; }
+            module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/download.js");
+            await module.InvokeVoidAsync("save", result.data, $"trip-{TripId}.pdf", "application/pdf");
+        }
+        catch (JSException) { error = "Браузер не смог сохранить файл. Повторите попытку."; }
+        finally { busy = false; }
+    }
+    public async ValueTask DisposeAsync() { if (module != null) await module.DisposeAsync(); }
+}

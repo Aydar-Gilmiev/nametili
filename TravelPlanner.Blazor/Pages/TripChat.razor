@@ -1,0 +1,127 @@
+@page "/trips/{TripId:int}/chat"
+@using Microsoft.AspNetCore.SignalR.Client
+@implements IAsyncDisposable
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+@inject HttpClient Http
+@inject IJSRuntime JS
+
+<PageTitle>Чат поездки — Наметили</PageTitle>
+<p><a href="@($"/trips/{TripId}")">Назад к поездке</a></p>
+<h1>Чат поездки</h1>
+<TripLinks TripId="TripId" />
+<p class="text-muted" role="status">@connectionStatus</p>
+@if (error != "") { <p role="alert">@error</p> }
+@if (loading) { <p role="status">Открываем чат…</p> }
+else if (allowed)
+{
+    <div class="actions mb-3">
+        @if (hub?.State == HubConnectionState.Disconnected)
+        { <button class="btn btn-outline-secondary" disabled="@connecting" @onclick="Connect">Подключиться снова</button> }
+        @if (hasOlder) { <button class="btn btn-outline-secondary" disabled="@loadingOlder" @onclick="Older">@(loadingOlder ? "Загрузка…" : "Ранние сообщения")</button> }
+    </div>
+    <section class="chat-history" @ref="historyElement" aria-label="История сообщений" aria-live="polite" aria-relevant="additions">
+        @if (messages.Count == 0) { <p class="text-muted">Здесь пока тихо. Напишите участникам поездки.</p> }
+        @foreach (var message in messages)
+        {
+            <article class="chat-message @(message.UserId == CurrentUser.User?.Id ? "is-mine" : "")" @key="message.Id">
+                <p class="message-meta">@message.Name · @message.CreatedAt.ToLocalTime().ToString("dd.MM HH:mm")</p>
+                <p class="description">@message.Text</p>
+            </article>
+        }
+    </section>
+    <form class="chat-compose" @onsubmit="Send" @onsubmit:preventDefault>
+        <label for="chat-text" class="form-label">Сообщение участникам</label>
+        <textarea id="chat-text" class="form-control mb-3" rows="3" maxlength="2000" required disabled="@sending" @bind="text"></textarea>
+        <button type="submit" class="btn btn-primary" disabled="@(sending || hub?.State != HubConnectionState.Connected)">@(sending ? "Отправляем…" : "Отправить")</button>
+    </form>
+}
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private HubConnection? hub;
+    private ElementReference historyElement;
+    private IJSObjectReference? scrollModule;
+    private string scrollMode = "latest";
+    private List<ChatMessage> messages = new();
+    private string text = "", error = "", connectionStatus = "Нет подключения";
+    private bool loading = true, allowed, sending, connecting, loadingOlder, hasOlder, disposed;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        if (hub != null) await hub.DisposeAsync();
+        loading = true; allowed = false; messages.Clear(); text = error = "";
+        var trip = await ApiRequest.GetTrip(TripId);
+        if (!trip.status) { error = trip.message; loading = false; return; }
+        allowed = true;
+        var connectedTrip = TripId;
+        hub = new HubConnectionBuilder()
+            .WithUrl(new Uri(Http.BaseAddress!, $"hubs/trip-chat?tripId={TripId}"), options =>
+            {
+                options.AccessTokenProvider = () => Task.FromResult<string?>(CurrentUser.Token);
+            }).WithAutomaticReconnect().Build();
+        hub.On<ChatMessage>("MessageReceived", message => InvokeAsync(() =>
+        {
+            if (disposed || TripId != connectedTrip) return;
+            AddMessage(message);
+            StateHasChanged();
+        }));
+        hub.Reconnecting += _ => InvokeAsync(() => { connectionStatus = "Восстанавливаем соединение…"; StateHasChanged(); });
+        hub.Reconnected += _ => InvokeAsync(async () => { connectionStatus = "Подключено"; await Latest(); StateHasChanged(); });
+        hub.Closed += _ => InvokeAsync(() => { connectionStatus = "Соединение закрыто. Подключитесь снова."; StateHasChanged(); });
+        await Connect();
+        loading = false;
+    }
+    private void AddMessage(ChatMessage message)
+    {
+        if (messages.All(value => value.Id != message.Id)) messages.Add(message);
+        messages = messages.OrderBy(value => value.Id).ToList();
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!allowed || loading || disposed) return;
+        scrollModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/chat.js");
+        await scrollModule.InvokeVoidAsync("update", historyElement, scrollMode);
+        scrollMode = "";
+    }
+    private async Task Connect()
+    {
+        if (connecting || hub == null || hub.State != HubConnectionState.Disconnected) return;
+        connecting = true; error = "";
+        try { await hub.StartAsync(); connectionStatus = "Подключено · Сообщения видят только участники поездки"; await Latest(); }
+        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or Microsoft.AspNetCore.SignalR.HubException or TaskCanceledException)
+        { error = "Не удалось подключиться к чату. Проверьте API и доступ к поездке."; connectionStatus = "Нет подключения"; }
+        finally { connecting = false; }
+    }
+    private async Task Latest()
+    {
+        var lastKnown = messages.Count == 0 ? 0 : messages.Max(value => value.Id);
+        var result = await ApiRequest.GetMessages(TripId);
+        if (!result.status || result.data == null) { error = result.message; return; }
+        hasOlder = result.data.Count == 50;
+        scrollMode = "latest";
+        messages = result.data.Concat(messages.Where(value => value.Id > lastKnown)).DistinctBy(value => value.Id).OrderBy(value => value.Id).ToList();
+    }
+    private async Task Older()
+    {
+        if (loadingOlder || messages.Count == 0) return;
+        loadingOlder = true;
+        var result = await ApiRequest.GetMessages(TripId, messages.Min(value => value.Id));
+        if (result.status && result.data != null)
+        { hasOlder = result.data.Count == 50; scrollMode = "older"; messages = result.data.Concat(messages).DistinctBy(value => value.Id).OrderBy(value => value.Id).ToList(); }
+        else error = result.message;
+        loadingOlder = false;
+    }
+    private async Task Send()
+    {
+        if (sending || hub?.State != HubConnectionState.Connected || string.IsNullOrWhiteSpace(text)) return;
+        sending = true; error = "";
+        try { var message = await hub.InvokeAsync<ChatMessage>("SendMessage", text); AddMessage(message); scrollMode = "latest"; text = ""; }
+        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or Microsoft.AspNetCore.SignalR.HubException or TaskCanceledException)
+        { error = "Не удалось подтвердить отправку. Проверьте историю перед повторной попыткой."; }
+        finally { sending = false; }
+    }
+    public async ValueTask DisposeAsync() { disposed = true; if (hub != null) await hub.DisposeAsync(); if (scrollModule != null) await scrollModule.DisposeAsync(); }
+}

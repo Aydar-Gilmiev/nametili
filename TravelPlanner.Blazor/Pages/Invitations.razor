@@ -1,0 +1,64 @@
+@page "/invitations"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Приглашения</PageTitle>
+<h1>Приглашения</h1>
+<p>Здесь появляются приглашения, отправленные на почту вашего аккаунта. Письма на почту пока не отправляются.</p>
+<button class="btn btn-outline-secondary mb-3" disabled="@(isLoading || isSaving)" @onclick="Load">Обновить</button>
+@if (errorMessage != "") { <p class="text-danger" role="alert">@errorMessage</p> }
+@if (successMessage != "") { <p class="text-success" role="status">@successMessage</p> }
+@if (isLoading) { <p role="status">Загрузка приглашений...</p> }
+else if (CurrentUser.User == null) { <a href="/login">Войти в аккаунт</a> }
+else if (invitations.Count == 0 && errorMessage == "") { <p>Новых приглашений нет.</p> }
+else if (invitations.Count > 0)
+{
+    <div class="table-responsive"><table class="table align-middle">
+        <thead><tr><th>Поездка</th><th>Направление</th><th>Роль</th><th>Действие</th></tr></thead>
+        <tbody>
+        @foreach (var invitation in invitations)
+        {
+            <tr @key="invitation.Id">
+                <td>@invitation.Name</td><td>@invitation.Destination</td>
+                <td>@(invitation.Role == "Organizer" ? "Организатор" : "Участник")</td>
+                <td><button class="btn btn-primary" disabled="@isSaving" @onclick="() => Accept(invitation.Id)">Принять</button></td>
+            </tr>
+        }
+        </tbody>
+    </table></div>
+}
+
+@code {
+    private List<Invitation> invitations = new();
+    private string errorMessage = "";
+    private string successMessage = "";
+    private bool isLoading;
+    private bool isSaving;
+    protected override async Task OnInitializedAsync()
+    {
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        await Load();
+    }
+    private async Task Load()
+    {
+        if (isLoading) return;
+        isLoading = true;
+        errorMessage = "";
+        var result = await ApiRequest.GetInvitations();
+        if (result.status && result.data != null) invitations = result.data;
+        else errorMessage = result.message;
+        isLoading = false;
+    }
+    private async Task Accept(int id)
+    {
+        if (isSaving) return;
+        isSaving = true;
+        successMessage = "";
+        errorMessage = "";
+        var result = await ApiRequest.AcceptInvitation(id);
+        if (!result.status) errorMessage = result.message;
+        else { await Load(); successMessage = "Приглашение принято. Поездка появилась в разделе «Мои поездки»."; }
+        isSaving = false;
+    }
+}

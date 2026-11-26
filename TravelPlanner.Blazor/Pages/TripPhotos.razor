@@ -1,0 +1,96 @@
+@page "/trips/{TripId:int}/photos"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Фотографии поездки — Наметили</PageTitle>
+<p><a href="@($"/trips/{TripId}")">Назад к поездке</a></p>
+<h1>Фотографии поездки</h1>
+<TripLinks TripId="TripId" />
+@if (error != "") { <p role="alert">@error</p> }
+@if (loading) { <p role="status">Загрузка фотографий…</p> }
+else if (allowed)
+{
+    <form class="edit-form mb-4" @onsubmit="Upload" @onsubmit:preventDefault>
+        <fieldset disabled="@saving">
+            <label for="photo-file" class="form-label">Фотография JPEG или PNG</label>
+            <InputFile id="photo-file" class="form-control mb-3" OnChange="Selected" accept="image/jpeg,image/png" @key="inputKey" />
+            <p class="text-muted">До 5 МБ и 20 мегапикселей. Фото увидят только участники поездки. В альбоме может быть до 100 фотографий.</p>
+            <label for="photo-caption" class="form-label">Подпись</label>
+            <input id="photo-caption" class="form-control mb-3" maxlength="300" @bind="caption" />
+            <button type="submit" class="btn btn-primary" disabled="@(saving || file == null)">@(saving ? "Загружаем…" : "Добавить фотографию")</button>
+        </fieldset>
+    </form>
+    <div class="actions mb-4"><button class="btn btn-outline-secondary" disabled="@saving" @onclick="Reload">Обновить альбом</button></div>
+    @if (photos.Count == 0) { <p class="empty-state">Альбом пока пуст. Добавьте первое фото поездки.</p> }
+    <div class="photo-grid">
+        @foreach (var photo in photos)
+        {
+            <figure class="trip-photo" @key="photo.Id">
+                <PhotoView TripId="TripId" PhotoId="photo.Id" Caption="photo.Caption" />
+                <figcaption><p class="description">@photo.Caption</p><p class="message-meta">@photo.Name · @photo.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy")</p></figcaption>
+                @if (photo.UserId == CurrentUser.User?.Id || organizer)
+                {
+                    <button class="btn btn-outline-danger btn-sm" disabled="@saving" @onclick="() => deletingId = photo.Id">Удалить</button>
+                    @if (deletingId == photo.Id)
+                    {
+                        <p class="mt-3">Удалить фотографию без возможности восстановления?</p>
+                        <div class="actions"><button class="btn btn-danger btn-sm" disabled="@saving" @onclick="() => Delete(photo.Id)">Удалить фотографию</button><button class="btn btn-outline-secondary btn-sm" @onclick="() => deletingId = null">Отмена</button></div>
+                    }
+                }
+            </figure>
+        }
+    </div>
+    @if (hasMore) { <button class="btn btn-outline-secondary" disabled="@saving" @onclick="More">Показать ещё</button> }
+}
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private List<TripPhoto> photos = new();
+    private IBrowserFile? file;
+    private string caption = "", error = "";
+    private bool loading = true, saving, allowed, organizer, hasMore;
+    private int inputKey;
+    private int? deletingId;
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        loading = true; allowed = false;
+        var result = await ApiRequest.GetTrip(TripId);
+        if (!result.status || result.data == null) { error = result.message; loading = false; return; }
+        organizer = result.data.Members.Any(member => member.Id == CurrentUser.User.Id && member.Role == "Organizer");
+        allowed = true; await Reload(); loading = false;
+    }
+    private void Selected(InputFileChangeEventArgs args)
+    {
+        error = ""; file = null;
+        if (args.File.Size > 5 * 1024 * 1024) { error = "Выберите файл не больше 5 МБ."; return; }
+        file = args.File;
+    }
+    private async Task Reload() { await Load(null); }
+    private async Task More() { if (saving || photos.Count == 0) return; saving = true; await Load(photos.Min(value => value.Id)); saving = false; }
+    private async Task Load(int? before)
+    {
+        error = "";
+        var result = await ApiRequest.GetPhotos(TripId, before);
+        if (!result.status || result.data == null) { error = result.message; return; }
+        hasMore = result.data.Count == 12;
+        photos = before == null ? result.data : photos.Concat(result.data).DistinctBy(value => value.Id).ToList();
+    }
+    private async Task Upload()
+    {
+        if (saving || file == null) return;
+        saving = true; error = "";
+        var result = await ApiRequest.UploadPhoto(TripId, file, caption);
+        if (result.status) { file = null; caption = ""; inputKey++; await Reload(); } else error = result.message;
+        saving = false;
+    }
+    private async Task Delete(int id)
+    {
+        if (saving) return;
+        saving = true; error = "";
+        var result = await ApiRequest.DeletePhoto(TripId, id);
+        if (result.status) { photos.RemoveAll(value => value.Id == id); deletingId = null; } else error = result.message;
+        saving = false;
+    }
+}

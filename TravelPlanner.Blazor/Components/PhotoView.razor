@@ -1,0 +1,39 @@
+@implements IAsyncDisposable
+@inject ApiRequest ApiRequest
+@inject IJSRuntime JS
+
+@if (url != "" && !broken)
+{
+    <a href="@url" target="_blank" rel="noopener noreferrer"><img class="trip-photo-image" src="@url" alt="@(Caption == "" ? "Фотография поездки" : Caption)" @onerror="ImageError" /></a>
+}
+else if (error != "") { <p role="status">@error</p> }
+else { <p role="status">Загрузка фотографии…</p> }
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    [Parameter] public int PhotoId { get; set; }
+    [Parameter] public string Caption { get; set; } = "";
+    private IJSObjectReference? module;
+    private string url = "", error = "";
+    private bool disposed;
+    private bool broken;
+    private void ImageError() { broken = true; error = "Браузер не смог прочитать фотографию. Попробуйте загрузить другой файл."; }
+    protected override async Task OnInitializedAsync()
+    {
+        var result = await ApiRequest.GetPhotoContent(TripId, PhotoId);
+        if (disposed) return;
+        if (!result.status || result.data == null) { error = result.message; return; }
+        try
+        {
+            module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/photos.js");
+            if (disposed) { await module.DisposeAsync(); return; }
+            url = await module.InvokeAsync<string>("create", result.data, result.message);
+        }
+        catch (JSException) { error = "Не удалось показать фотографию."; }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        if (module != null) { try { if (url != "") await module.InvokeVoidAsync("revoke", url); } catch (JSException) { } await module.DisposeAsync(); }
+    }
+}

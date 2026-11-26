@@ -1,0 +1,69 @@
+@page "/trips"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Мои поездки</PageTitle>
+<div class="page-heading">
+<div><h1>Мои поездки</h1><p>Здесь начинаются ваши общие планы.</p></div>
+<div class="actions">
+    <a class="btn btn-success" href="/trips/add">Создать поездку</a>
+    <button class="btn btn-outline-secondary" disabled="@isLoading" @onclick="LoadTrips">Обновить</button>
+</div>
+</div>
+@if (errorMessage != "") { <p class="text-danger" role="alert">@errorMessage</p> }
+@if (isLoading) { <p role="status">Загрузка поездок...</p> }
+else if (CurrentUser.User == null) { <a href="/login">Войти в аккаунт</a> }
+else if (trips.Count == 0 && errorMessage == "")
+{
+    <section class="empty-state">
+    <h2>Куда отправимся?</h2>
+    <p>У вас пока нет поездок. Создайте свою или примите приглашение.</p>
+    <a href="/invitations">Посмотреть приглашения</a>
+    </section>
+}
+else if (trips.Count > 0)
+{
+    <div class="table-responsive"><table class="table align-middle">
+        <thead><tr><th>Поездка</th><th>Направление</th><th>Даты</th><th>Ваша роль</th><th>Действия</th></tr></thead>
+        <tbody>
+        @foreach (var trip in trips)
+        {
+            <tr @key="trip.Id">
+                <td>@trip.Name</td><td>@trip.Destination</td>
+                <td class="dates">@trip.StartDate.ToString("dd.MM.yyyy") — @trip.EndDate.ToString("dd.MM.yyyy")</td>
+                <td class="role-label">@(trip.Role == "Organizer" ? "Организатор" : "Участник")</td>
+                <td><div class="actions">
+                    <a class="btn btn-primary btn-sm" href="@($"/trips/{trip.Id}")">Подробнее</a>
+                    @if (trip.Role == "Organizer")
+                    {
+                        <a class="btn btn-outline-secondary btn-sm" href="@($"/trips/edit/{trip.Id}")">Изменить</a>
+                        <a class="btn btn-outline-danger btn-sm" href="@($"/trips/delete/{trip.Id}")">Удалить</a>
+                    }
+                </div></td>
+            </tr>
+        }
+        </tbody>
+    </table></div>
+}
+
+@code {
+    private List<Trip> trips = new();
+    private string errorMessage = "";
+    private bool isLoading;
+    protected override async Task OnInitializedAsync()
+    {
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        await LoadTrips();
+    }
+    private async Task LoadTrips()
+    {
+        if (isLoading) return;
+        isLoading = true;
+        errorMessage = "";
+        var result = await ApiRequest.GetTrips();
+        if (result.status && result.data != null) trips = result.data;
+        else errorMessage = result.message;
+        isLoading = false;
+    }
+}

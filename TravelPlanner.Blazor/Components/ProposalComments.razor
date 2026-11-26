@@ -1,0 +1,82 @@
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+
+<div class="comments">
+    <button type="button" class="btn btn-outline-secondary btn-sm" aria-expanded="@opened" @onclick="Toggle">@(opened ? "Скрыть комментарии" : "Комментарии")</button>
+    @if (opened)
+    {
+        <h3 class="mt-3">Обсуждение предложения</h3>
+        @if (error != "") { <p role="alert">@error</p> }
+        @if (loading) { <p role="status">Загрузка комментариев…</p> }
+        else
+        {
+            <div class="actions mb-3">
+                @if (hasOlder) { <button class="btn btn-outline-secondary btn-sm" disabled="@saving" @onclick="Older">Ранние комментарии</button> }
+                <button class="btn btn-outline-secondary btn-sm" disabled="@saving" @onclick="Reload">Обновить</button>
+            </div>
+            @if (comments.Count == 0) { <p class="text-muted">Пока никто не написал. Обсудите это предложение первым.</p> }
+            @foreach (var comment in comments)
+            {
+                <article class="comment" @key="comment.Id">
+                    <p class="message-meta">@comment.Name · @comment.CreatedAt.ToLocalTime().ToString("dd.MM HH:mm")</p>
+                    <p class="description">@comment.Text</p>
+                    <div class="actions">
+                        @if (comment.UserId == CurrentUser.User?.Id) { <button class="btn btn-outline-secondary btn-sm" disabled="@saving" @onclick="() => Edit(comment)">Изменить</button> }
+                        @if (comment.UserId == CurrentUser.User?.Id || IsOrganizer)
+                        { <button class="btn btn-outline-danger btn-sm" disabled="@saving" @onclick="() => deletingId = comment.Id">Удалить</button> }
+                    </div>
+                    @if (deletingId == comment.Id)
+                    {
+                        <p class="mt-3">Удалить этот комментарий?</p>
+                        <div class="actions"><button class="btn btn-danger btn-sm" disabled="@saving" @onclick="() => Delete(comment.Id)">Удалить комментарий</button><button class="btn btn-outline-secondary btn-sm" @onclick="() => deletingId = null">Отмена</button></div>
+                    }
+                </article>
+            }
+            <form @onsubmit="Save" @onsubmit:preventDefault>
+                <label for="@($"comment-{ProposalId}")" class="form-label">@(editingId == null ? "Ваш комментарий" : "Изменение комментария")</label>
+                <textarea id="@($"comment-{ProposalId}")" class="form-control mb-3" rows="3" maxlength="2000" required disabled="@saving" @bind="text"></textarea>
+                <div class="actions"><button type="submit" class="btn btn-primary" disabled="@saving">@(saving ? "Сохраняем…" : editingId == null ? "Написать" : "Сохранить")</button>
+                @if (editingId != null) { <button type="button" class="btn btn-outline-secondary" @onclick="CancelEdit">Отмена</button> }</div>
+            </form>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    [Parameter] public int ProposalId { get; set; }
+    [Parameter] public bool IsOrganizer { get; set; }
+    private List<ChatMessage> comments = new();
+    private bool opened, loading, saving, hasOlder;
+    private int? editingId, deletingId;
+    private string text = "", error = "";
+    private async Task Toggle() { opened = !opened; if (opened) await Reload(); }
+    private async Task Reload() { loading = true; await Load(null); loading = false; }
+    private async Task Older() { if (comments.Count > 0) { saving = true; await Load(comments.Min(value => value.Id)); saving = false; } }
+    private async Task Load(int? before)
+    {
+        error = "";
+        var result = await ApiRequest.GetComments(TripId, ProposalId, before);
+        if (!result.status || result.data == null) { error = result.message; return; }
+        hasOlder = result.data.Count == 50;
+        comments = before == null ? result.data : result.data.Concat(comments).DistinctBy(value => value.Id).OrderBy(value => value.Id).ToList();
+    }
+    private void Edit(ChatMessage comment) { editingId = comment.Id; text = comment.Text; }
+    private void CancelEdit() { editingId = null; text = ""; }
+    private async Task Save()
+    {
+        if (saving || string.IsNullOrWhiteSpace(text)) return;
+        saving = true;
+        var result = editingId == null ? await ApiRequest.AddComment(TripId, ProposalId, text) : await ApiRequest.UpdateComment(TripId, ProposalId, editingId.Value, text);
+        if (result.status) { CancelEdit(); await Reload(); } else error = result.message;
+        saving = false;
+    }
+    private async Task Delete(int id)
+    {
+        if (saving) return;
+        saving = true;
+        var result = await ApiRequest.DeleteComment(TripId, ProposalId, id);
+        if (result.status) { comments.RemoveAll(value => value.Id == id); deletingId = null; if (editingId == id) CancelEdit(); } else error = result.message;
+        saving = false;
+    }
+}

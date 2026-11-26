@@ -1,0 +1,108 @@
+@page "/trips/{TripId:int}/balances"
+@inject ApiRequest ApiRequest
+@inject CurrentUser CurrentUser
+@inject NavigationManager Navigation
+
+<PageTitle>Расчёты — Наметили</PageTitle>
+<p><a href="@($"/trips/{TripId}")">Назад к поездке</a></p>
+<h1>Расчёты</h1>
+<TripLinks TripId="TripId" />
+@if (error != "") { <p role="alert">@error</p> }
+@if (notice != "") { <p role="status" class="text-success">@notice</p> }
+@if (loading) { <p role="status">Загрузка балансов…</p> }
+else if (details != null && balances != null)
+{
+    <div class="page-heading"><p>@details.Trip.Name · Общая валюта поездки</p><button class="btn btn-outline-secondary" disabled="@busy" @onclick="Reload">Обновить</button></div>
+    <p>Потрачено: <strong class="money">@balances.TotalExpenses.ToString("N2")</strong>. Учтено возвратов: <strong class="money">@balances.TotalRepayments.ToString("N2")</strong>.</p>
+    <p class="text-muted">Положительный баланс — участнику должны вернуть деньги. Отрицательный — он должен группе. Расчёт учитывает расходы, доли и уже отмеченные возвраты.</p>
+    <p class="balance-scroll-hint text-muted">На узком экране таблицу можно прокрутить вбок.</p>
+    <div class="table-responsive"><table class="table"><caption class="visually-hidden">Балансы участников поездки</caption><thead><tr><th>Участник</th><th>Баланс</th><th>Оплатил(а)</th><th>Своя доля</th><th>Отправил(а)</th><th>Получил(а)</th></tr></thead><tbody>
+        @foreach (var member in balances.Members) { <tr><td>@member.Name</td><td class="money">@member.Balance.ToString("+0.00;-0.00;0.00")</td><td class="money">@member.Paid.ToString("N2")</td><td class="money">@member.Share.ToString("N2")</td><td class="money">@member.Sent.ToString("N2")</td><td class="money">@member.Received.ToString("N2")</td></tr> }
+    </tbody></table></div>
+    <div class="planner-layout">
+        <section>
+            <h2>Кому перевести</h2>
+            @if (balances.Settlement.Transfers.Count == 0) { <div class="empty-state"><p>Все расчёты закрыты. Никто никому не должен.</p></div> }
+            else
+            {
+                <p>@(balances.Settlement.IsOptimal ? "Найден план с минимальным количеством переводов." : "Показан сокращённый план. Минимальность количества переводов не подтверждена.")</p>
+                @foreach (var transfer in balances.Settlement.Transfers)
+                {
+                    <article class="finance-entry"><div class="entry-heading"><h3>@transfer.FromName → @transfer.ToName</h3><strong class="money">@transfer.Amount.ToString("N2")</strong></div>
+                        @if (organizer || transfer.FromUserId == CurrentUser.User?.Id) { <button class="btn btn-outline-secondary" disabled="@busy" @onclick="() => Prepare(transfer)">Подготовить возврат</button> }
+                    </article>
+                }
+            }
+            <h2 class="mt-4">История возвратов</h2>
+            @if (repayments.Count == 0) { <p class="text-muted">Возвраты ещё не отмечали.</p> }
+            @foreach (var repayment in repayments)
+            {
+                <article class="finance-entry" @key="repayment.Id"><div class="entry-heading"><h3>@repayment.FromName → @repayment.ToName</h3><strong class="money">@repayment.Amount.ToString("N2")</strong></div><p class="text-muted">@repayment.PaidOn.ToString("dd.MM.yyyy")</p>
+                    @if (organizer || repayment.FromUserId == CurrentUser.User?.Id)
+                    {
+                        <div class="actions"><button class="btn btn-outline-secondary btn-sm" disabled="@busy" @onclick="() => Edit(repayment)">Изменить</button><button class="btn btn-outline-danger btn-sm" disabled="@busy" @onclick="() => deleting = repayment.Id">Удалить</button></div>
+                        @if (deleting == repayment.Id) { <div class="confirm-action"><p>Удалить запись о возврате? Долг появится снова.</p><div class="actions"><button class="btn btn-danger" disabled="@busy" @onclick="() => Delete(repayment.Id)">Удалить запись</button><button class="btn btn-outline-secondary" disabled="@busy" @onclick="() => deleting = null">Отмена</button></div></div> }
+                    }
+                </article>
+            }
+        </section>
+        <section>
+            <h2>@(draft.Id == 0 ? "Отметить возврат" : "Изменить возврат")</h2>
+            <form class="edit-form planner-form" @onsubmit="Save" @onsubmit:preventDefault>
+                <fieldset disabled="@busy">
+                    <label for="repayment-from" class="form-label">Кто отправил</label><select id="repayment-from" class="form-select mb-3" @bind="draft.FromUserId" disabled="@(!organizer)">@foreach (var member in details.Members) { <option value="@member.Id">@member.Name</option> }</select>
+                    <label for="repayment-to" class="form-label">Кому отправил</label><select id="repayment-to" class="form-select mb-3" @bind="draft.ToUserId"><option value="0">Выберите получателя</option>@foreach (var member in details.Members) { <option value="@member.Id">@member.Name</option> }</select>
+                    <label for="repayment-amount" class="form-label">Сумма</label><input id="repayment-amount" class="form-control mb-3" type="number" required min="0.01" max="9999999999.99" step="0.01" @bind="draft.Amount" />
+                    <label for="repayment-date" class="form-label">Дата перевода</label><input id="repayment-date" class="form-control mb-3" type="date" required @bind="draft.PaidOn" />
+                    <div class="actions"><button class="btn btn-primary" type="submit">@(busy ? "Сохраняем…" : "Сохранить возврат")</button><button class="btn btn-outline-secondary" type="button" @onclick="Reset">Отмена</button></div>
+                </fieldset>
+            </form>
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public int TripId { get; set; }
+    private TripDetailsData? details;
+    private Balances? balances;
+    private List<Repayment> repayments = new();
+    private Repayment draft = new();
+    private bool loading = true, busy, organizer;
+    private int? deleting;
+    private string error = "", notice = "";
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CurrentUser.User == null) { Navigation.NavigateTo("/login"); return; }
+        loading = true; details = null; balances = null; error = notice = "";
+        var result = await ApiRequest.GetTrip(TripId);
+        if (!result.status || result.data == null) { error = result.message; loading = false; return; }
+        details = result.data; organizer = details.Members.Any(value => value.Id == CurrentUser.User.Id && value.Role == "Organizer");
+        Reset(); await Reload(); loading = false;
+    }
+    private async Task Reload()
+    {
+        var result = await ApiRequest.GetBalances(TripId);
+        if (result.status && result.data != null) balances = result.data; else error = result.message;
+        var history = await ApiRequest.GetRepayments(TripId);
+        if (history.status && history.data != null) repayments = history.data; else error = history.message;
+    }
+    private void Reset() { draft = new Repayment { FromUserId = CurrentUser.User?.Id ?? 0 }; }
+    private void Edit(Repayment item) { error = notice = ""; draft = new Repayment { Id = item.Id, FromUserId = item.FromUserId, ToUserId = item.ToUserId, Amount = item.Amount, PaidOn = item.PaidOn }; }
+    private void Prepare(Repayment item) { Reset(); draft.FromUserId = item.FromUserId; draft.ToUserId = item.ToUserId; draft.Amount = item.Amount; notice = "Проверьте сумму и дату. Сохраните запись после фактического перевода."; error = ""; }
+    private async Task Save()
+    {
+        if (busy) return; error = notice = "";
+        if (draft.ToUserId == 0 || draft.ToUserId == draft.FromUserId) { error = "Выберите разных отправителя и получателя."; return; }
+        busy = true;
+        var result = draft.Id == 0 ? await ApiRequest.AddRepayment(TripId, draft) : await ApiRequest.UpdateRepayment(TripId, draft.Id, draft);
+        if (result.status) { Reset(); await Reload(); notice = "Возврат сохранён. Балансы пересчитаны."; } else error = result.message;
+        busy = false;
+    }
+    private async Task Delete(int id)
+    {
+        if (busy) return; busy = true; error = notice = "";
+        var result = await ApiRequest.DeleteRepayment(TripId, id);
+        if (result.status) { if (draft.Id == id) Reset(); deleting = null; await Reload(); notice = "Запись удалена. Балансы пересчитаны."; } else error = result.message;
+        busy = false;
+    }
+}
